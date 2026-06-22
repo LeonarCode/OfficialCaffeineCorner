@@ -1,0 +1,116 @@
+{% extends 'unfold/layouts/unauthenticated.html' %}
+{% load i18n static %}
+
+{% block content %}
+<div style="
+  position: fixed;
+  inset: 0;
+  background-image: url('{% static "img/Background.jpeg" %}');
+  background-size: cover;
+  background-position: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+">
+  <div style="
+    background: rgba(255,255,255,0.85);
+    backdrop-filter: blur(8px);
+    border-radius: 16px;
+    padding: 40px;
+    width: 100%;
+    max-width: 420px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.15);
+  ">
+    <div style="margin-bottom: 28px;">
+      <p style="color: #6b7280; font-size: 13px; margin-bottom: 4px;">Welcome back to</p>
+      <h1 style="color: #2C1503; font-size: 26px; font-weight: 700; margin: 0;">Caffeine Corner</h1>
+    </div>
+
+    <form method="post" action="{{ request.get_full_path }}">
+      {% csrf_token %}
+      <input type="hidden" name="next" value="{{ next }}" />
+
+      <div style="margin-bottom: 16px;">
+        <label style="display:block; font-size:13px; font-weight:600; color:#374151; margin-bottom:6px;">
+          {% trans "Username" %} <span style="color:#ef4444;">*</span>
+        </label>
+        <input
+          type="text"
+          name="username"
+          autofocus
+          autocapitalize="none"
+          autocomplete="username"
+          required
+          style="
+            width: 100%;
+            padding: 10px 14px;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            font-size: 14px;
+            color: #111827;
+            background: #f0f4ff;
+            outline: none;
+            box-sizing: border-box;
+          "
+        />
+      </div>
+
+      <div style="margin-bottom: 24px;">
+        <label style="display:block; font-size:13px; font-weight:600; color:#374151; margin-bottom:6px;">
+          {% trans "Password" %} <span style="color:#ef4444;">*</span>
+        </label>
+        <input
+          type="password"
+          name="password"
+          autocomplete="current-password"
+          required
+          style="
+            width: 100%;
+            padding: 10px 14px;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            font-size: 14px;
+            color: #111827;
+            background: #f0f4ff;
+            outline: none;
+            box-sizing: border-box;
+          "
+        />
+      </div>
+
+      {% if form.errors %}
+      <div style="
+        background: #fee2e2;
+        border: 1px solid #fca5a5;
+        border-radius: 8px;
+        padding: 10px 14px;
+        margin-bottom: 16px;
+        font-size: 13px;
+        color: #dc2626;
+      ">
+        {% trans "Invalid username or password. Please try again." %}
+      </div>
+      {% endif %}
+
+      <button type="submit" style="
+        width: 100%;
+        padding: 12px;
+        background: #6f4e37;
+        color: white;
+        font-size: 14px;
+        font-weight: 700;
+        border: none;
+        border-radius: 8px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+      ">
+        {% trans "Log in" %} →
+      </button>
+
+    </form>
+  </div>
+</div>
+{% endblock %}

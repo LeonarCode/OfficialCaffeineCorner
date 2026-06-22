@@ -1,0 +1,39 @@
+{% extends 'admin/change_list.html' %}
+{% load i18n %}
+
+{% block content %}
+
+{% if low_stock_count %}
+<div style="background:#fff6e0; border:1px solid #fcd34d; border-radius:12px; padding:16px; margin-bottom:20px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+  <div style="display:flex; align-items:center; gap:10px;">
+    <span style="font-size:20px;">⚠️</span>
+    <div>
+      <p style="color:#a06010; font-weight:600; font-size:13px; margin:0;">
+        {{ low_stock_count }} item(s) are low on stock and need reordering!
+      </p>
+      <p style="color:#a06010; font-size:11px; margin:4px 0 0;">
+        Click the button to auto-generate purchase orders for all low stock items.
+      </p>
+    </div>
+  </div>
+  <form method="post" action="{{ auto_generate_url }}">
+    {% csrf_token %}
+    <button
+      type="submit"
+      onclick="return confirm('Auto-generate Purchase Orders for {{ low_stock_count }} low stock item(s)?')"
+      style="background:#a06010; color:white; border:none; padding:10px 18px; border-radius:8px; font-size:12px; font-weight:600; cursor:pointer; white-space:nowrap;"
+    >
+      🔄 Auto-Generate Purchase Orders
+    </button>
+  </form>
+</div>
+{% else %}
+<div style="background:#eaf5ed; border:1px solid #86efac; border-radius:12px; padding:12px 16px; margin-bottom:20px; display:flex; align-items:center; gap:10px;">
+  <span style="font-size:16px;">✅</span>
+  <p style="color:#2e7d4a; font-size:12px; font-weight:500; margin:0;">All stock levels are OK. No reorder needed.</p>
+</div>
+{% endif %}
+
+{{ block.super }}
+
+{% endblock %}

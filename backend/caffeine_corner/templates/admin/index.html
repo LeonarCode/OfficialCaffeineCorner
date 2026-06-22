@@ -1,0 +1,214 @@
+{% extends 'admin/index.html' %}
+{% load i18n %}
+
+{% block content %}
+
+<!-- Notifications -->
+{% if unread_notifications %}
+<div style="background:white; border-radius:12px; padding:20px; box-shadow:0 1px 4px rgba(0,0,0,0.06); margin-bottom:20px;">
+  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+    <div style="display:flex; align-items:center; gap:8px;">
+      <p style="color:#2C1503; font-weight:600; font-size:14px; margin:0;">Notifications</p>
+      <span style="background:#c04a3a; color:white; font-size:10px; font-weight:700; padding:2px 8px; border-radius:99px;">
+        {{ unread_count }} unread
+      </span>
+    </div>
+    <a href="/admin/online_shop/notification/" style="color:#C4A882; font-size:12px;">View all →</a>
+  </div>
+  {% for notif in unread_notifications %}
+  <div style="display:flex; align-items:start; gap:12px; padding:10px 0; border-bottom:1px solid #f3f4f6;">
+    <span style="font-size:18px; flex-shrink:0;">
+      {% if notif.type == 'new_order' %}🛒
+      {% elif notif.type == 'bulk_order' %}🍽️
+      {% elif notif.type == 'payment_paid' %}✅
+      {% else %}📢{% endif %}
+    </span>
+    <div style="flex:1; min-width:0;">
+      <p style="color:#2C1503; font-size:13px; font-weight:600; margin:0 0 2px; word-break:break-word;">{{ notif.title }}</p>
+      <p style="color:#6b7280; font-size:12px; margin:0 0 2px; word-break:break-word;">{{ notif.message }}</p>
+      <p style="color:#9ca3af; font-size:11px; margin:0;">{{ notif.created_at }}</p>
+    </div>
+    {% if notif.id %}
+    <a href="/admin/mark-notification-read/{{ notif.id }}/"
+       style="color:#6f4e37; font-size:11px; font-weight:600; white-space:nowrap; flex-shrink:0;">
+      Mark read
+    </a>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<!-- KPI Cards -->
+<div class="kpi-grid" style="display:grid; grid-template-columns:repeat(2,1fr); gap:12px; margin-bottom:20px;">
+  {% for kpi in kpi %}
+  <div style="background:white; border-radius:12px; padding:16px; box-shadow:0 1px 4px rgba(0,0,0,0.06);">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+      <p style="color:#6b7280; font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; margin:0;">{{ kpi.title }}</p>
+      <span class="material-symbols-outlined" style="font-size:16px; color:#C4A882;">{{ kpi.icon }}</span>
+    </div>
+    <p style="color:#2C1503; font-size:22px; font-weight:700; margin:0;">{{ kpi.metric }}</p>
+  </div>
+  {% endfor %}
+</div>
+
+<!-- Chart -->
+<div style="background:white; border-radius:12px; padding:20px; box-shadow:0 1px 4px rgba(0,0,0,0.06); margin-bottom:20px;">
+  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; flex-wrap:wrap; gap:8px;">
+    <p style="color:#2C1503; font-weight:600; font-size:14px; margin:0;">Orders — Last 30 Days</p>
+    <p style="color:#6b7280; font-size:12px; margin:0;">Daily order count</p>
+  </div>
+  <canvas id="ordersChart" style="max-height:200px; width:100%;"></canvas>
+</div>
+
+<!-- Low Stock + Top Customers -->
+<div class="side-grid" style="display:grid; grid-template-columns:1fr; gap:16px; margin-bottom:20px;">
+
+  <!-- Low Stock -->
+  <div style="background:white; border-radius:12px; padding:20px; box-shadow:0 1px 4px rgba(0,0,0,0.06);">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+      <p style="color:#2C1503; font-weight:600; font-size:13px; margin:0;">Low Stock</p>
+      <a href="{% url 'admin:inventory_inventory_changelist' %}" style="color:#C4A882; font-size:11px;">View all →</a>
+    </div>
+    {% if low_stock_items %}
+      {% for item in low_stock_items %}
+      <div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid #f3f4f6; flex-wrap:wrap; gap:4px;">
+        <span style="font-size:12px; color:#374151;">{{ item.name }}</span>
+        <span style="font-size:12px; color:#ef4444; font-weight:600;">{{ item.quantity_on_hand }} {{ item.unit }}</span>
+      </div>
+      {% endfor %}
+    {% else %}
+      <p style="color:#9ca3af; font-size:12px; text-align:center; padding:16px 0;">All stock levels OK ✓</p>
+    {% endif %}
+  </div>
+
+  <!-- Top Customers -->
+  <div style="background:white; border-radius:12px; padding:20px; box-shadow:0 1px 4px rgba(0,0,0,0.06);">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+      <p style="color:#2C1503; font-weight:600; font-size:13px; margin:0;">Top Customers</p>
+      <a href="{% url 'admin:online_shop_loyaltypoint_changelist' %}" style="color:#C4A882; font-size:11px;">View all →</a>
+    </div>
+    {% if top_customers %}
+      {% for customer in top_customers %}
+      <div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid #f3f4f6; flex-wrap:wrap; gap:4px;">
+        <span style="font-size:12px; color:#374151; word-break:break-all;">{{ customer.email }}</span>
+        <span style="font-size:12px; color:#6f4e37; font-weight:600;">{{ customer.points }} pts</span>
+      </div>
+      {% endfor %}
+    {% else %}
+      <p style="color:#9ca3af; font-size:12px; text-align:center; padding:16px 0;">No loyalty points yet</p>
+    {% endif %}
+  </div>
+
+</div>
+
+<!-- Recent Orders Table -->
+<div style="background:white; border-radius:12px; padding:20px; box-shadow:0 1px 4px rgba(0,0,0,0.06); overflow-x:auto;">
+  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+    <p style="color:#2C1503; font-weight:600; font-size:14px; margin:0;">Recent Orders</p>
+    <a href="{% url 'admin:online_shop_order_changelist' %}" style="color:#C4A882; font-size:12px;">View all →</a>
+  </div>
+  <div style="overflow-x:auto;">
+    <table style="width:100%; border-collapse:collapse; font-size:12px; min-width:500px;">
+      <thead>
+        <tr style="border-bottom:2px solid #f3f4f6;">
+          <th style="text-align:left; padding:8px; color:#6b7280; font-weight:600;">#</th>
+          <th style="text-align:left; padding:8px; color:#6b7280; font-weight:600;">Customer</th>
+          <th style="text-align:left; padding:8px; color:#6b7280; font-weight:600;">Product</th>
+          <th style="text-align:left; padding:8px; color:#6b7280; font-weight:600;">Qty</th>
+          <th style="text-align:left; padding:8px; color:#6b7280; font-weight:600;">Total</th>
+          <th style="text-align:left; padding:8px; color:#6b7280; font-weight:600;">Date</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for order in recent_orders %}
+        <tr style="border-bottom:1px solid #f9fafb;">
+          <td style="padding:10px 8px; color:#2C1503; font-weight:600;">#{{ order.id }}</td>
+          <td style="padding:10px 8px; color:#374151; word-break:break-all;">{{ order.customer }}</td>
+          <td style="padding:10px 8px; color:#374151;">{{ order.product }}</td>
+          <td style="padding:10px 8px; color:#374151;">{{ order.qty }}</td>
+          <td style="padding:10px 8px; color:#2C1503; font-weight:600;">{{ order.sum }}</td>
+          <td style="padding:10px 8px; color:#6b7280; white-space:nowrap;">{{ order.date }}</td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="6" style="padding:24px; text-align:center; color:#9ca3af;">No orders yet</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+<!-- Activity Logs -->
+<div style="background:white; border-radius:12px; padding:24px; box-shadow:0 1px 4px rgba(0,0,0,0.06); margin-bottom:24px;">
+  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+    <p style="color:#2C1503; font-weight:600; font-size:14px; margin:0;">Recent Activity</p>
+    <a href="{% url 'admin:online_shop_activitylog_changelist' %}" style="color:#C4A882; font-size:12px;">View all →</a>
+  </div>
+  {% if recent_logs %}
+    {% for log in recent_logs %}
+    <div style="display:flex; align-items:start; gap:12px; padding:8px 0; border-bottom:1px solid #f3f4f6;">
+      <div style="width:8px; height:8px; border-radius:50%; margin-top:4px; flex-shrink:0;
+        background:{% if log.action_key == 'order_created' %}#34d399
+        {% elif log.action_key == 'order_cancelled' %}#f87171
+        {% elif log.action_key == 'payment_paid' %}#34d399
+        {% elif log.action_key == 'order_updated' %}#60a5fa
+        {% else %}#9ca3af{% endif %};">
+      </div>
+      <div style="flex:1; min-width:0;">
+        <p style="color:#374151; font-size:12px; font-weight:600; margin:0 0 1px; word-break:break-word;">{{ log.details }}</p>
+        <p style="color:#9ca3af; font-size:11px; margin:0;">{{ log.user }} · {{ log.created_at }}</p>
+      </div>
+    </div>
+    {% endfor %}
+  {% else %}
+    <p style="color:#9ca3af; font-size:12px; text-align:center; padding:16px 0;">No activity yet.</p>
+  {% endif %}
+</div>
+
+<!-- Responsive styles -->
+<style>
+  @media (min-width: 768px) {
+    .kpi-grid {
+      grid-template-columns: repeat(4, 1fr) !important;
+    }
+    .side-grid {
+      grid-template-columns: 1fr 1fr !important;
+    }
+  }
+  @media (min-width: 1024px) {
+    .side-grid {
+      grid-template-columns: 1fr 1fr !important;
+    }
+  }
+</style>
+
+<!-- Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+  const ctx = document.getElementById('ordersChart').getContext('2d');
+  new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: {{ chart.labels|safe }},
+      datasets: [{
+        label: 'Orders',
+        data: {{ chart.datasets.0.data|safe }},
+        backgroundColor: 'rgba(111, 78, 55, 0.7)',
+        borderColor: '#6f4e37',
+        borderWidth: 1,
+        borderRadius: 4,
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        y: { beginAtZero: true, ticks: { stepSize: 1 } },
+        x: { ticks: { maxTicksLimit: 10 } }
+      }
+    }
+  });
+</script>
+
+{% endblock %}

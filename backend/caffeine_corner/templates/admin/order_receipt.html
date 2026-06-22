@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Order Receipt — #CC-{{ order.id|stringformat:"05d" }}</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'Courier New', Courier, monospace;
+      background: #f5f5f5;
+      display: flex;
+      justify-content: center;
+      padding: 20px;
+    }
+
+    .receipt {
+      background: white;
+      width: 320px;
+      padding: 24px 20px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.1);
+    }
+
+    /* Header */
+    .header { text-align: center; margin-bottom: 16px; }
+    .header .logo { font-size: 22px; font-weight: 900; color: #2C1503; letter-spacing: 2px; }
+    .header .tagline { font-size: 10px; color: #9ca3af; margin-top: 2px; }
+    .header .address { font-size: 10px; color: #6b7280; margin-top: 4px; }
+
+    /* Divider */
+    .divider { border: none; border-top: 1px dashed #d1d5db; margin: 12px 0; }
+    .divider-solid { border: none; border-top: 2px solid #2C1503; margin: 12px 0; }
+
+    /* Order Info */
+    .order-info { font-size: 11px; color: #374151; margin-bottom: 4px; }
+    .order-info span { float: right; font-weight: 600; }
+
+    /* Badge */
+    .badge {
+      display: inline-block;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 4px;
+    }
+    .badge-bulk { background: #fff6e0; color: #a06010; }
+    .badge-regular { background: #eaf5ed; color: #2e7d4a; }
+
+    /* Items */
+    .items-header {
+      display: flex;
+      justify-content: space-between;
+      font-size: 10px;
+      font-weight: 700;
+      color: #6b7280;
+      text-transform: uppercase;
+      margin-bottom: 6px;
+    }
+    .item { margin-bottom: 8px; }
+    .item-name { font-size: 12px; font-weight: 600; color: #2C1503; }
+    .item-variant { font-size: 10px; color: #9ca3af; }
+    .item-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      color: #374151;
+    }
+
+    /* Totals */
+    .total-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      color: #374151;
+      margin-bottom: 4px;
+    }
+    .total-row.grand {
+      font-size: 15px;
+      font-weight: 900;
+      color: #2C1503;
+    }
+    .discount { color: #2e7d4a; }
+
+    /* Payment */
+    .payment-box {
+      background: #faf7f2;
+      border-radius: 8px;
+      padding: 10px 12px;
+      margin: 12px 0;
+    }
+    .payment-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      color: #374151;
+      margin-bottom: 3px;
+    }
+    .payment-row:last-child { margin-bottom: 0; }
+    .payment-status-paid { color: #2e7d4a; font-weight: 700; }
+    .payment-status-unpaid { color: #c04a3a; font-weight: 700; }
+    .payment-status-downpayment { color: #a06010; font-weight: 700; }
+
+    /* Footer */
+    .footer { text-align: center; margin-top: 16px; }
+    .footer p { font-size: 10px; color: #9ca3af; line-height: 1.6; }
+    .footer .thank-you { font-size: 13px; font-weight: 700; color: #2C1503; margin-bottom: 4px; }
+
+    /* Print Button */
+    .print-btn {
+      display: block;
+      width: 100%;
+      background: #2C1503;
+      color: white;
+      border: none;
+      padding: 10px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 20px;
+    }
+    .back-btn {
+      display: block;
+      width: 100%;
+      background: #f3f4f6;
+      color: #374151;
+      border: none;
+      padding: 10px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 8px;
+      text-align: center;
+      text-decoration: none;
+    }
+
+    @media print {
+      body { background: white; padding: 0; }
+      .receipt { box-shadow: none; }
+      .print-btn, .back-btn { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="receipt">
+
+    <!-- Header -->
+    <div class="header">
+      <div class="logo">☕ CAFFEINE CORNER</div>
+      <div class="tagline">Premium Coffee & More</div>
+      <div class="address">Garcia Hernandez, Bohol, Philippines</div>
+    </div>
+
+    <hr class="divider-solid">
+
+    <!-- Order Info -->
+    <div style="margin-bottom:12px;">
+      <div class="order-info">
+        Order ID <span>#CC-{{ order.id|stringformat:"05d" }}</span>
+      </div>
+      <div class="order-info">
+        Date <span>{{ order.created_at|date:"M d, Y h:i A" }}</span>
+      </div>
+      <div class="order-info">
+        Customer <span>{{ order.email }}</span>
+      </div>
+      <div class="order-info" style="margin-top:6px;">
+        Type
+        <span>
+          {% if order.order_type == 'bulk' %}
+            <span class="badge badge-bulk">🍽️ Bulk/Catering</span>
+          {% else %}
+            <span class="badge badge-regular">📦 Regular</span>
+          {% endif %}
+        </span>
+      </div>
+      {% if order.order_type == 'bulk' and order.event_date %}
+      <div class="order-info">
+        Event Date <span>{{ order.event_date|date:"M d, Y" }}</span>
+      </div>
+      {% endif %}
+      {% if order.pax %}
+      <div class="order-info">
+        Pax <span>{{ order.pax }} persons</span>
+      </div>
+      {% endif %}
+    </div>
+
+    <hr class="divider">
+
+    <!-- Items -->
+    <div class="items-header">
+      <span>Item</span>
+      <span>Subtotal</span>
+    </div>
+
+    {% for item in order.items.all %}
+    <div class="item">
+      <div class="item-name">{{ item.product.name }}</div>
+      {% if item.variant %}
+      <div class="item-variant">Size: {{ item.variant.size|capfirst }}</div>
+      {% endif %}
+      <div class="item-row">
+        <span>{{ item.quantity }} x ₱{{ item.price }}</span>
+        <span>₱{{ item.subtotal }}</span>
+      </div>
+    </div>
+    {% endfor %}
+
+    <hr class="divider">
+
+    <!-- Totals -->
+    <div class="total-row">
+      <span>Subtotal</span>
+      <span>₱{{ order.total_price }}</span>
+    </div>
+    {% if order.discount > 0 %}
+    <div class="total-row discount">
+      <span>Discount (Points)</span>
+      <span>-₱{{ order.discount }}</span>
+    </div>
+    {% endif %}
+    <div class="total-row">
+      <span>Delivery</span>
+      <span>Free</span>
+    </div>
+
+    <hr class="divider">
+
+    <div class="total-row grand">
+      <span>TOTAL</span>
+      <span>₱{{ order.total_price }}</span>
+    </div>
+
+    <!-- Bulk Downpayment Info -->
+    {% if order.order_type == 'bulk' and order.downpayment_amount > 0 %}
+    <div style="margin-top:8px;">
+      <div class="total-row" style="color:#a06010;">
+        <span>Downpayment (50%)</span>
+        <span>₱{{ order.downpayment_amount }}</span>
+      </div>
+      <div class="total-row" style="color:#6b7280;">
+        <span>Remaining Balance</span>
+        <span>₱{{ order.remaining_balance }}</span>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Payment Info -->
+    <div class="payment-box">
+      <div class="payment-row">
+        <span>Payment Method</span>
+        <span>
+          {% if order.payment_method == 'cod' %}🏦 Cash on Delivery
+          {% else %}📱 GCash{% endif %}
+        </span>
+      </div>
+      <div class="payment-row">
+        <span>Payment Status</span>
+        <span class="payment-status-{{ order.payment_status }}">
+          {% if order.payment_status == 'paid' %}✓ Paid
+          {% elif order.payment_status == 'downpayment' %}⚡ Downpayment Paid
+          {% else %}⏳ Unpaid{% endif %}
+        </span>
+      </div>
+      {% if order.gcash_ref %}
+      <div class="payment-row">
+        <span>GCash Ref</span>
+        <span>{{ order.gcash_ref }}</span>
+      </div>
+      {% endif %}
+    </div>
+
+    <!-- Delivery Address -->
+    <div style="margin-bottom:12px;">
+      <p style="font-size:10px; font-weight:700; color:#6b7280; text-transform:uppercase; margin-bottom:4px;">Delivery Address</p>
+      <p style="font-size:11px; color:#374151; line-height:1.5;">{{ order.address }}</p>
+    </div>
+
+    {% if order.notes %}
+    <div style="margin-bottom:12px;">
+      <p style="font-size:10px; font-weight:700; color:#6b7280; text-transform:uppercase; margin-bottom:4px;">Notes</p>
+      <p style="font-size:11px; color:#374151; line-height:1.5;">{{ order.notes }}</p>
+    </div>
+    {% endif %}
+
+    <!-- Loyalty Points -->
+    {% if order.points_earned > 0 %}
+    <div style="background:#eaf5ed; border-radius:6px; padding:8px 12px; margin-bottom:12px;">
+      <p style="font-size:11px; color:#2e7d4a; font-weight:600; margin:0;">
+        🎉 +{{ order.points_earned }} loyalty points earned!
+      </p>
+    </div>
+    {% endif %}
+
+    <hr class="divider-solid">
+
+    <!-- Footer -->
+    <div class="footer">
+      <p class="thank-you">Thank you for your order!</p>
+      <p>Please keep this receipt for your records.</p>
+      <p style="margin-top:4px;">caffeinecorner@gmail.com</p>
+      <p>Garcia Hernandez, Bohol</p>
+    </div>
+
+    <!-- Buttons -->
+    <button class="print-btn" onclick="window.print()">🖨️ Print Receipt</button>
+    <a href="javascript:history.back()" class="back-btn">← Back</a>
+
+  </div>
+</body>
+</html>

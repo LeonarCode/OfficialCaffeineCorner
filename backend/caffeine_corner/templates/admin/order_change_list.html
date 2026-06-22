@@ -1,0 +1,19 @@
+{% extends 'admin/change_list.html' %}
+
+{% block breadcrumbs %}
+  {{ block.super }}
+  <div style="display:flex; gap:8px; padding:12px 0;">
+    
+      href="/admin/export-orders/?format=excel"
+      style="background:#2e7d4a; color:white; padding:8px 14px; border-radius:8px; font-size:12px; font-weight:600; text-decoration:none;"
+    >
+      📊 Export Excel
+    </a>
+    
+      href="/admin/export-orders/?format=csv"
+      style="background:#1a5494; color:white; padding:8px 14px; border-radius:8px; font-size:12px; font-weight:600; text-decoration:none;"
+    >
+      📄 Export CSV
+    </a>
+  </div>
+{% endblock %}

@@ -1,0 +1,23 @@
+{% extends 'admin/base_site.html' %}
+
+{% block content %}
+<div style="padding:24px;">
+  <div style="display:flex; align-items:center; gap:12px; margin-bottom:24px;">
+    <a href="/admin/" style="background:#f3f4f6; color:#374151; font-size:12px; font-weight:600; padding:8px 12px; border-radius:8px; text-decoration:none;">← Dashboard</a>
+    <h1 style="color:#2C1503; font-size:20px; font-weight:700; margin:0;">Dine-in QR Codes</h1>
+  </div>
+
+  <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(200px, 1fr)); gap:16px;">
+    {% for table in tables %}
+    <div style="background:white; border-radius:16px; padding:20px; box-shadow:0 1px 4px rgba(0,0,0,0.06); text-align:center;">
+      <p style="color:#2C1503; font-weight:700; font-size:14px; margin:0 0 12px;">Table {{ table.number }}</p>
+      <img src="data:image/png;base64,{{ table.qr_b64 }}" alt="Table {{ table.number }} QR" style="width:160px; height:160px;" />
+      <p style="color:#9ca3af; font-size:10px; margin:8px 0 12px; word-break:break-all;">{{ table.url }}</p>
+      <a href="/admin/table-qr/{{ table.number }}/" style="display:block; background:#2C1503; color:white; font-size:12px; font-weight:600; padding:8px; border-radius:8px; text-decoration:none;">
+        ⬇️ Download PNG
+      </a>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}
