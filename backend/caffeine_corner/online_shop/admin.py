@@ -113,9 +113,9 @@ class ProductAdmin(ModelAdmin):
 
 @admin.register(Order)
 class OrderAdmin(ModelAdmin):
-    list_display    = ['id', 'email', 'order_type', 'show_status', 'payment_method', 'show_payment_status', 'total_price', 'created_at', 'print_receipt_link']
+    list_display    = ['id', 'email', 'phone', 'order_type', 'show_status', 'payment_method', 'show_payment_status', 'total_price', 'created_at', 'print_receipt_link']
     list_filter     = ['status', 'payment_method', 'payment_status', 'order_type']
-    search_fields   = ['email', 'id']
+    search_fields   = ['email', 'phone', 'id']
     readonly_fields = ['total_price', 'item_count', 'points_earned', 'points_used', 'downpayment_amount', 'remaining_balance', 'created_at', 'updated_at']
     inlines         = [OrderItemInline]
     actions         = [

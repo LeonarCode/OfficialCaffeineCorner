@@ -377,27 +377,6 @@ UNFOLD = {
                     },
                 ],
             },
-            {
-                "title": "Social & Sites",
-                "separator": True,
-                "items": [
-                    {
-                        "title": "Social Accounts",
-                        "icon": "account_circle",
-                        "link": reverse_lazy("admin:socialaccount_socialaccount_changelist"),
-                    },
-                    {
-                        "title": "Social Apps",
-                        "icon": "apps",
-                        "link": reverse_lazy("admin:socialaccount_socialapp_changelist"),
-                    },
-                    {
-                        "title": "Sites",
-                        "icon": "language",
-                        "link": reverse_lazy("admin:sites_site_changelist"),
-                    },
-                ],
-            },
         ],
     },
 }
