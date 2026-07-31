@@ -30,7 +30,7 @@ const Checkout = () => {
   const [selectedZone,   setSelectedZone]   = useState(null)
   const [loadingZones,   setLoadingZones]   = useState(false)
   const { isAuthenticated }                 = useAuth()
-  const [form, setForm] = useState({ email: '', address: '', notes: '' })
+  const [form, setForm] = useState({ email: '', phone: '', address: '', notes: '' })
 
   const location   = useLocation()
   const navigate   = useNavigate()
@@ -67,6 +67,12 @@ const Checkout = () => {
     init()
   }, [])
 
+  const validatePhone = (phone) => {
+    const cleaned = phone.replace(/[\s\-]/g, '')
+    const pattern = /^(09\d{9}|\+639\d{9})$/
+    return pattern.test(cleaned)
+  }
+
   const fetchCart = async () => {
     setFetching(true)
     try {
@@ -89,7 +95,12 @@ const Checkout = () => {
 
   const validate = () => {
     const e = {}
-    if (!form.email)   e.email   = 'Email is required'
+    if (!form.email) e.email = 'Email is required'
+    if (!form.phone) {
+      e.phone = 'Phone number is required'
+    } else if (!validatePhone(form.phone)) {
+      e.phone = 'Enter a valid Philippine mobile number (e.g. 09171234567)'
+    }
     if (!form.address) e.address = 'Delivery address is required'
     if (orderType === 'bulk' && !eventDate) e.eventDate = 'Event date is required'
     if (!selectedZone) e.zone = 'Please select your delivery zone'
@@ -110,6 +121,7 @@ const Checkout = () => {
     try {
       const data = {
         email:          form.email,
+        phone:          form.phone.replace(/[\s\-]/g, ''),
         address:        form.address,
         notes:          form.notes,
         payment_method: paymentMethod,
@@ -137,7 +149,7 @@ const Checkout = () => {
     }
   }
 
-  const isFormValid = form.email && form.address && selectedZone &&
+  const isFormValid = form.email && form.phone && validatePhone(form.phone) && form.address && selectedZone &&
     (orderType !== 'bulk' || eventDate) &&
     !belowMinOrder &&
     subtotal >= (selectedZone?.min_order_amount || 0)
@@ -180,6 +192,10 @@ const Checkout = () => {
                   <span className='text-[#2C1503] text-xs font-semibold'>{selectedZone.name}</span>
                 </div>
               )}
+              <div className='flex justify-between items-center'>
+                <span className='text-gray-400 text-xs'>Contact</span>
+                <span className='text-[#2C1503] text-xs font-semibold'>{form.phone}</span>
+              </div>
               <div className='flex justify-between items-center'>
                 <span className='text-gray-400 text-xs'>Payment</span>
                 <span className='text-[#2C1503] text-xs font-semibold'>
@@ -375,7 +391,7 @@ const Checkout = () => {
               <div className='flex items-center gap-3'>
                 <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition
                   ${currentStep >= 1 ? 'bg-[#3D1F00] text-[#C4A882]' : 'bg-gray-100 text-gray-400'}`}>
-                  {form.email && form.address && selectedZone ? '✓' : '2'}
+                  {form.email && form.phone && form.address && selectedZone ? '✓' : '2'}
                 </div>
                 <h2 className='text-[#2C1503] font-semibold text-sm'>Contact & Delivery</h2>
               </div>
@@ -451,6 +467,35 @@ const Checkout = () => {
                     : <p className='text-gray-400 text-xs mt-1'>{isAuthenticated ? '✓ Logged in — email cannot be changed.' : 'Order confirmation will be sent here.'}</p>
                   }
                 </div>
+
+                {/* Phone Number — Anti-troll requirement */}
+                <div>
+                  <label className='text-[#2C1503] text-xs font-semibold uppercase mb-1.5 block'>
+                    Phone Number <span className='text-red-400'>*</span>
+                  </label>
+                  <div className='relative'>
+                    <span className='absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none'>🇵🇭</span>
+                    <input
+                      type='tel'
+                      inputMode='numeric'
+                      placeholder='09XX XXX XXXX'
+                      value={form.phone}
+                      onChange={e => {
+                        const val = e.target.value.replace(/[^\d+]/g, '')
+                        setForm({ ...form, phone: val })
+                        setErrors(p => ({ ...p, phone: '' }))
+                      }}
+                      maxLength={13}
+                      className={`w-full border rounded-xl pl-11 pr-4 py-3 text-sm outline-none transition bg-[#FAF6F0] text-gray-600
+                        ${errors.phone ? 'border-red-400' : 'border-gray-200 focus:border-[#C4A882]'}`}
+                    />
+                  </div>
+                  {errors.phone
+                    ? <p className='text-red-400 text-xs mt-1'>{errors.phone}</p>
+                    : <p className='text-gray-400 text-xs mt-1'>We'll contact you to confirm your order.</p>
+                  }
+                </div>
+
                 <div>
                   <label className='text-[#2C1503] text-xs font-semibold uppercase mb-1.5 block'>
                     Delivery Address <span className='text-red-400'>*</span>
@@ -700,7 +745,7 @@ const Checkout = () => {
                 </span>
               ) : orderType === 'bulk' ? '→ PLACE BULK ORDER' : '→ PLACE ORDER'}
             </button>
-            <p className='text-[#C4A882]/40 text-[10px] text-center mt-3'>Delivery fee varies by zone</p>
+            <p className='text-[#C4A882]/40 text-[10px] text-center mt-3'>We verify orders via phone number</p>
           </div>
         </div>
 

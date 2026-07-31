@@ -1,5 +1,6 @@
 from decimal import Decimal
-
+from django.utils import timezone
+from datetime import timedelta
 from rest_framework import generics, status
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -370,7 +371,20 @@ class OrderCreateView(APIView):
 
         data       = serializer.validated_data
         user       = request.user if request.user.is_authenticated else None
+        phone = data['phone']
         order_type = data.get('order_type', 'regular')
+
+        # ─── Anti-spam: check kung 3+ pending orders na ang same phone within 1 hour ───
+        recent_pending = Order.objects.filter(
+            phone=phone,
+            status='pending',
+            created_at__gte=timezone.now() - timedelta(hours=1),
+        ).count()
+
+        if recent_pending >= 3:
+            return Response({
+                'error': 'You have too many pending orders. Please wait for your previous orders to be confirmed, or contact us directly.'
+            }, status=status.HTTP_429_TOO_MANY_REQUESTS)
 
         if user and not data.get('items'):
             cart_items = CartItem.objects.filter(user=user).select_related('product', 'variant')

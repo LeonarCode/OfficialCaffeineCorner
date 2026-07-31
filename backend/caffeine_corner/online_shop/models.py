@@ -175,6 +175,7 @@ class Order(models.Model):
     # Who ordered
     user    = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
     email   = models.EmailField()
+    phone   = models.CharField(max_length=15, help_text="Philippine mobile number, e.g. 09171234567")
     address = models.TextField()
     notes   = models.TextField(blank=True, default='')
 
