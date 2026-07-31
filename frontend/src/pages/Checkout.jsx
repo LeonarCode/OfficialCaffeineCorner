@@ -3,9 +3,11 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { createOrder, getLoyaltyPoints } from '../services/orderService.js'
 import { getCart } from '../services/cartService.js'
 import { getMe } from '../services/authService.js'
+import { getZones } from '../services/orderService.js'
 import { useAuth } from '../context/AuthContext'
 
 const STEPS = ['Order Type', 'Delivery', 'Payment']
+const GLOBAL_MIN_ORDER = 1000
 
 const Checkout = () => {
   const [cartItems,      setCartItems]      = useState([])
@@ -24,6 +26,9 @@ const Checkout = () => {
   const [showSummary,    setShowSummary]    = useState(false)
   const [errors,         setErrors]         = useState({})
   const [currentStep,    setCurrentStep]    = useState(0)
+  const [zones,          setZones]          = useState([])
+  const [selectedZone,   setSelectedZone]   = useState(null)
+  const [loadingZones,   setLoadingZones]   = useState(false)
   const { isAuthenticated }                 = useAuth()
   const [form, setForm] = useState({ email: '', address: '', notes: '' })
 
@@ -42,6 +47,16 @@ const Checkout = () => {
         const res = await getLoyaltyPoints()
         setLoyalty(res.data)
       } catch {}
+
+      setLoadingZones(true)
+      try {
+        const res = await getZones()
+        setZones(res.data)
+      } catch (err) {
+        console.error('Failed to fetch zones', err)
+      } finally {
+        setLoadingZones(false)
+      }
 
       if (buyNowData?.product) {
         setFetching(false)
@@ -65,15 +80,26 @@ const Checkout = () => {
     ? buyNowData.price * quantity
     : cartItems.reduce((sum, item) => sum + parseFloat(item.product_price) * item.quantity, 0)
 
+  const deliveryFee    = selectedZone ? parseFloat(selectedZone.delivery_fee) : 0
   const pointsDiscount = usePoints && loyalty ? Math.min(pointsToUse * 0.1, subtotal) : 0
-  const downpayment    = orderType === 'bulk' ? (subtotal - pointsDiscount) * 0.5 : 0
-  const total          = subtotal - pointsDiscount
+  const downpayment    = orderType === 'bulk' ? (subtotal + deliveryFee - pointsDiscount) * 0.5 : 0
+  const total          = subtotal + deliveryFee - pointsDiscount
+  const belowMinOrder  = subtotal < GLOBAL_MIN_ORDER
+  const amountToMin    = GLOBAL_MIN_ORDER - subtotal
 
   const validate = () => {
     const e = {}
     if (!form.email)   e.email   = 'Email is required'
     if (!form.address) e.address = 'Delivery address is required'
     if (orderType === 'bulk' && !eventDate) e.eventDate = 'Event date is required'
+    if (!selectedZone) e.zone = 'Please select your delivery zone'
+
+    if (belowMinOrder) {
+      e.minOrder = `Minimum order amount is ₱${GLOBAL_MIN_ORDER.toFixed(2)}. Add ₱${amountToMin.toFixed(2)} more.`
+    } else if (selectedZone && subtotal < selectedZone.min_order_amount) {
+      e.zone = `Minimum order for ${selectedZone.name} is ₱${parseFloat(selectedZone.min_order_amount).toFixed(2)}`
+    }
+
     setErrors(e)
     return Object.keys(e).length === 0
   }
@@ -91,6 +117,7 @@ const Checkout = () => {
         event_date:     orderType === 'bulk' ? eventDate : null,
         pax:            orderType === 'bulk' ? parseInt(pax) || 0 : 0,
         points_to_use:  usePoints ? pointsToUse : 0,
+        zone_id:        selectedZone?.id || null,
         items: buyNowData?.product
           ? [{ product: buyNowData.product, quantity }]
           : cartItems.map(item => ({
@@ -103,13 +130,17 @@ const Checkout = () => {
       setOrderData(res.data)
       setShowSuccess(true)
     } catch (err) {
+      setErrors(prev => ({ ...prev, submit: err.response?.data?.error || 'Failed to place order.' }))
       console.error('Failed to place order', err)
     } finally {
       setLoading(false)
     }
   }
 
-  const isFormValid = form.email && form.address && (orderType !== 'bulk' || eventDate)
+  const isFormValid = form.email && form.address && selectedZone &&
+    (orderType !== 'bulk' || eventDate) &&
+    !belowMinOrder &&
+    subtotal >= (selectedZone?.min_order_amount || 0)
 
   return (
     <div className='flex flex-col min-h-screen bg-[#FAF6F0]'>
@@ -143,6 +174,12 @@ const Checkout = () => {
                   {orderType === 'bulk' ? '🍽️ Bulk / Catering' : '📦 Regular'}
                 </span>
               </div>
+              {selectedZone && (
+                <div className='flex justify-between items-center'>
+                  <span className='text-gray-400 text-xs'>Zone</span>
+                  <span className='text-[#2C1503] text-xs font-semibold'>{selectedZone.name}</span>
+                </div>
+              )}
               <div className='flex justify-between items-center'>
                 <span className='text-gray-400 text-xs'>Payment</span>
                 <span className='text-[#2C1503] text-xs font-semibold'>
@@ -150,6 +187,16 @@ const Checkout = () => {
                 </span>
               </div>
               <hr className='border-gray-100' />
+              <div className='flex justify-between items-center'>
+                <span className='text-gray-400 text-xs'>Subtotal</span>
+                <span className='text-[#2C1503] text-xs font-semibold'>₱{subtotal.toFixed(2)}</span>
+              </div>
+              {deliveryFee > 0 && (
+                <div className='flex justify-between items-center'>
+                  <span className='text-gray-400 text-xs'>Delivery Fee</span>
+                  <span className='text-[#2C1503] text-xs font-semibold'>₱{deliveryFee.toFixed(2)}</span>
+                </div>
+              )}
               {pointsDiscount > 0 && (
                 <div className='flex justify-between items-center'>
                   <span className='text-green-600 text-xs'>Points Discount</span>
@@ -276,6 +323,12 @@ const Checkout = () => {
                     </div>
                   </label>
                 </div>
+
+                {/* Min order note — applies to both regular and bulk */}
+                <p className='text-gray-400 text-[11px] mb-3'>
+                  ℹ️ Minimum order amount is <span className='font-semibold text-[#6f4e37]'>₱{GLOBAL_MIN_ORDER.toFixed(2)}</span> for delivery orders.
+                </p>
+
                 {orderType === 'bulk' && (
                   <div className='flex flex-col gap-3 bg-amber-50 border border-amber-200 rounded-xl p-4'>
                     <p className='text-amber-700 text-xs font-semibold'>⚠️ Bulk orders require 50% downpayment. Remaining balance upon delivery.</p>
@@ -322,7 +375,7 @@ const Checkout = () => {
               <div className='flex items-center gap-3'>
                 <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition
                   ${currentStep >= 1 ? 'bg-[#3D1F00] text-[#C4A882]' : 'bg-gray-100 text-gray-400'}`}>
-                  {form.email && form.address ? '✓' : '2'}
+                  {form.email && form.address && selectedZone ? '✓' : '2'}
                 </div>
                 <h2 className='text-[#2C1503] font-semibold text-sm'>Contact & Delivery</h2>
               </div>
@@ -331,6 +384,54 @@ const Checkout = () => {
 
             {currentStep === 1 && (
               <div className='px-5 pb-5 flex flex-col gap-4'>
+
+                {/* Zone Selector */}
+                <div>
+                  <label className='text-[#2C1503] text-xs font-semibold uppercase mb-1.5 block'>
+                    Delivery Zone <span className='text-red-400'>*</span>
+                  </label>
+                  {loadingZones ? (
+                    <div className='h-12 bg-gray-100 rounded-xl animate-pulse' />
+                  ) : zones.length === 0 ? (
+                    <p className='text-gray-400 text-xs bg-gray-50 rounded-xl px-4 py-3'>
+                      No delivery zones available at the moment.
+                    </p>
+                  ) : (
+                    <div className='flex flex-col gap-2'>
+                      {zones.map(zone => (
+                        <label
+                          key={zone.id}
+                          className={`flex items-center justify-between border rounded-xl px-4 py-3 cursor-pointer transition
+                            ${selectedZone?.id === zone.id ? 'border-[#C4A882] bg-[#FAF6F0]' : 'border-gray-200 hover:border-gray-300'}`}
+                        >
+                          <div className='flex items-center gap-3'>
+                            <input
+                              type='radio'
+                              name='zone'
+                              checked={selectedZone?.id === zone.id}
+                              onChange={() => { setSelectedZone(zone); setErrors(p => ({ ...p, zone: '' })) }}
+                              className='accent-[#3D1F00]'
+                            />
+                            <div>
+                              <p className='text-[#2C1503] text-sm font-semibold'>{zone.name}</p>
+                              <div className='flex items-center gap-2 text-xs text-gray-400'>
+                                {zone.estimated_time && <span>⏱ {zone.estimated_time}</span>}
+                                {zone.min_order_amount > 0 && (
+                                  <span>· Min. ₱{parseFloat(zone.min_order_amount).toFixed(0)}</span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                          <p className='text-[#6f4e37] text-sm font-bold shrink-0'>
+                            {parseFloat(zone.delivery_fee) === 0 ? 'Free' : `₱${parseFloat(zone.delivery_fee).toFixed(2)}`}
+                          </p>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                  {errors.zone && <p className='text-red-400 text-xs mt-1'>{errors.zone}</p>}
+                </div>
+
                 <div>
                   <label className='text-[#2C1503] text-xs font-semibold uppercase mb-1.5 block'>
                     Email Address <span className='text-red-400'>*</span>
@@ -355,7 +456,7 @@ const Checkout = () => {
                     Delivery Address <span className='text-red-400'>*</span>
                   </label>
                   <textarea
-                    placeholder='House No., Street, Barangay, City, Province'
+                    placeholder='House No., Street, Barangay'
                     value={form.address}
                     onChange={e => { setForm({ ...form, address: e.target.value }); setErrors(p => ({ ...p, address: '' })) }}
                     rows={3}
@@ -531,8 +632,12 @@ const Checkout = () => {
                   </div>
                 )}
                 <div className='flex justify-between'>
-                  <p className='text-[#C4A882]/60 text-xs'>Delivery</p>
-                  <p className='text-white text-xs font-semibold'>Free</p>
+                  <p className='text-[#C4A882]/60 text-xs'>
+                    Delivery {selectedZone && `(${selectedZone.name})`}
+                  </p>
+                  <p className='text-white text-xs font-semibold'>
+                    {!selectedZone ? '—' : deliveryFee === 0 ? 'Free' : `₱${deliveryFee.toFixed(2)}`}
+                  </p>
                 </div>
                 {orderType === 'bulk' && (
                   <>
@@ -556,6 +661,15 @@ const Checkout = () => {
                 <p className='text-white font-bold text-xl'>₱{total.toFixed(2)}</p>
               </div>
 
+              {/* Minimum order warning banner */}
+              {subtotal > 0 && belowMinOrder && (
+                <div className='bg-amber-500/20 border border-amber-400/30 rounded-xl px-3 py-2.5 mb-3'>
+                  <p className='text-amber-200 text-xs font-semibold'>
+                    ⚠️ Add ₱{amountToMin.toFixed(2)} more to reach the ₱{GLOBAL_MIN_ORDER.toFixed(2)} minimum order.
+                  </p>
+                </div>
+              )}
+
               <div className='flex items-center gap-2 bg-white/10 rounded-xl px-3 py-2 mb-4'>
                 <span className='text-sm'>{paymentMethod === 'cod' ? '🏦' : '📱'}</span>
                 <p className='text-white text-xs font-semibold'>
@@ -563,6 +677,13 @@ const Checkout = () => {
                 </p>
               </div>
             </div>
+
+            {errors.minOrder && (
+              <p className='text-red-300 text-xs text-center mb-2'>{errors.minOrder}</p>
+            )}
+            {errors.submit && (
+              <p className='text-red-300 text-xs text-center mb-2'>{errors.submit}</p>
+            )}
 
             <button
               onClick={handleSubmit}
@@ -579,7 +700,7 @@ const Checkout = () => {
                 </span>
               ) : orderType === 'bulk' ? '→ PLACE BULK ORDER' : '→ PLACE ORDER'}
             </button>
-            <p className='text-[#C4A882]/40 text-[10px] text-center mt-3'>No account required · Free delivery</p>
+            <p className='text-[#C4A882]/40 text-[10px] text-center mt-3'>Delivery fee varies by zone</p>
           </div>
         </div>
 

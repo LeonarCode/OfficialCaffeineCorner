@@ -3,7 +3,7 @@ from django.contrib import admin
 # Register your models here.
 from django.contrib import admin
 from unfold.admin import ModelAdmin, TabularInline, format_html, mark_safe
-from .models import ActivityLog, Category, Product, Variant, Rating, Order, OrderItem, CartItem, LoyaltyPoint, Notification
+from .models import ActivityLog, Category, Product, Variant, Rating, Order, OrderItem, CartItem, LoyaltyPoint, Notification, TownZone
 from unfold.decorators import action
 
 
@@ -232,3 +232,9 @@ class ActivityLogAdmin(ModelAdmin):
             return format_html('<span style="font-size:12px;">{}</span>', obj.user.email)
         return mark_safe('<span style="color:#9ca3af;font-size:12px;">System</span>')
     show_user.short_description = 'User'
+
+@admin.register(TownZone)
+class TownZoneAdmin(ModelAdmin):
+    list_display = ['name', 'delivery_fee', 'min_order_amount', 'estimated_time', 'is_active']
+    list_editable = ['delivery_fee', 'min_order_amount', 'estimated_time', 'is_active']
+    search_fields = ['name']

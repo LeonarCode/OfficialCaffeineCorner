@@ -11,3 +11,6 @@ export const getOrder = (id) =>
 
 export const getLoyaltyPoints = () =>
     api.get('/api/loyalty/')
+
+export const getZones = () =>
+    api.get('/api/zones/')

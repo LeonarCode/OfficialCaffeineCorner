@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Category, Product, Variant, Rating, Order, OrderItem, CartItem, LoyaltyPoint
+from .models import Category, Product, Variant, Rating, Order, OrderItem, CartItem, LoyaltyPoint, TownZone
 
 
 class CategorySerializer(serializers.ModelSerializer):
@@ -47,6 +47,10 @@ class ProductSerializer(serializers.ModelSerializer):
     def get_rating_count(self, obj):
         return obj.ratings.count()
 
+class TownZoneSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TownZone
+        fields = ['id', 'name', 'delivery_fee', 'min_order_amount', 'estimated_time']
 
 class OrderItemSerializer(serializers.ModelSerializer):
     product_name = serializers.CharField(source='product.name', read_only=True)
@@ -60,19 +64,22 @@ class OrderItemSerializer(serializers.ModelSerializer):
 
 
 class OrderSerializer(serializers.ModelSerializer):
-    items             = OrderItemSerializer(many=True, read_only=True)
-    total_price       = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
-    item_count        = serializers.IntegerField(read_only=True)
+    items       = OrderItemSerializer(many=True, read_only=True)
+    total_price = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    subtotal    = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)  # ← dagdag
+    item_count  = serializers.IntegerField(read_only=True)
+    zone_name   = serializers.CharField(source='zone.name', read_only=True, default=None)  # ← dagdag
 
     class Meta:
         model = Order
         fields = [
             'id', 'email', 'address', 'notes',
             'status', 'payment_method', 'payment_status',
-            'order_type', 'downpayment_amount', 'remaining_balance',  # ← dagdag
-            'event_date', 'pax',                                       # ← dagdag
+            'order_type', 'downpayment_amount', 'remaining_balance',
+            'event_date', 'pax', 'table_number',
+            'zone', 'zone_name', 'delivery_fee',  # ← dagdag
             'gcash_ref', 'discount', 'points_earned', 'points_used',
-            'items', 'total_price', 'item_count',
+            'items', 'subtotal', 'total_price', 'item_count',
             'created_at', 'updated_at',
         ]
         read_only_fields = ['status', 'payment_status', 'points_earned', 'created_at', 'updated_at']
@@ -80,7 +87,7 @@ class OrderSerializer(serializers.ModelSerializer):
 
 class CreateOrderSerializer(serializers.Serializer):
     email          = serializers.EmailField()
-    address        = serializers.CharField()
+    address        = serializers.CharField(required=False, allow_blank=True, default='')
     notes          = serializers.CharField(required=False, allow_blank=True)
     payment_method = serializers.ChoiceField(choices=['cod', 'gcash', 'counter'])
     points_to_use  = serializers.IntegerField(required=False, default=0)
@@ -89,11 +96,11 @@ class CreateOrderSerializer(serializers.Serializer):
                          required=False,
                          default=list
                      )
-    # ← Dagdag para sa bulk
-    order_type     = serializers.ChoiceField(choices=['regular', 'bulk'], default='regular')
+    order_type     = serializers.ChoiceField(choices=['regular', 'bulk', 'dine_in'], default='regular')
     event_date     = serializers.DateField(required=False, allow_null=True)
     pax            = serializers.IntegerField(required=False, default=0)
-    table_number   = serializers.CharField(required=False, allow_blank=True, default='')  # ← dagdag
+    table_number   = serializers.CharField(required=False, allow_blank=True, default='')
+    zone_id        = serializers.IntegerField(required=False, allow_null=True)  # ← dagdag
 
 
 class CartItemSerializer(serializers.ModelSerializer):

@@ -4,7 +4,7 @@ from .views import (
     RatingListCreateView, CartListView, CartAddView,
     CartUpdateView, CartDeleteView,
     OrderListView, OrderCreateView, OrderDetailView,
-    LoyaltyPointView, RatingListCreateView, paymongo_webhook, CreatePayMongoSourceView
+    LoyaltyPointView, RatingListCreateView, paymongo_webhook, CreatePayMongoSourceView, TownZoneListView
 )
 
 urlpatterns = [
@@ -33,4 +33,6 @@ urlpatterns = [
     # paymoney integration would go here
     path('paymongo/webhook/', paymongo_webhook, name='paymongo-webhook'),
     path('paymongo/create-source/', CreatePayMongoSourceView.as_view(), name='create-paymongo-source'),
+    # Town Zones
+    path('zones/', TownZoneListView.as_view(), name='zones'),
 ]

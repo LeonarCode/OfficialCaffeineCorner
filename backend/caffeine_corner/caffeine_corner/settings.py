@@ -272,6 +272,11 @@ UNFOLD = {
                         "link": reverse_lazy("admin:online_shop_notification_changelist"),
                         # Optional: show unread count badge
                     },
+                    {
+                        "title": "Town Zones",
+                        "icon": "location_on",
+                        "link": reverse_lazy("admin:online_shop_townzone_changelist"),
+                    }
                 ],
             },
             {

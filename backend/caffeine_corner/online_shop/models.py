@@ -131,7 +131,21 @@ class Rating(models.Model):
     def __str__(self):
         return f"{self.product.name} - {self.rating} stars by {self.user.username}"
 
+class TownZone(models.Model):
+    name          = models.CharField(max_length=100, unique=True)
+    delivery_fee  = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    is_active     = models.BooleanField(default=True, help_text="Uncheck para hindi pa muna ma-deliver dito")
+    min_order_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0, help_text="Minimum order para dito maka-order")
+    estimated_time    = models.CharField(max_length=50, blank=True, help_text="e.g. '30-45 mins'")
 
+    class Meta:
+        ordering = ("name",)
+        verbose_name = "Town Zone"
+        verbose_name_plural = "Town Zones"
+
+    def __str__(self):
+        return f"{self.name} (₱{self.delivery_fee})"
+    
 class Order(models.Model):
     ORDER_TYPE_CHOICES = [
         ('regular', 'Regular'),
@@ -146,31 +160,43 @@ class Order(models.Model):
         ('cancelled',  'Cancelled'),
     ]
     PAYMENT_METHOD_CHOICES = [
-        ('cod',   'Cash on Delivery'),
-        ('gcash', 'GCash'),
-        ('counter', 'Pay at Counter'), 
+        ('cod',     'Cash on Delivery'),
+        ('gcash',   'GCash'),
+        ('counter', 'Pay at Counter'),
     ]
     PAYMENT_STATUS_CHOICES = [
-        ('unpaid',   'Unpaid'),
+        ('unpaid',      'Unpaid'),
         ('downpayment', 'Downpayment Paid'),
-        ('paid',     'Paid'),
-        ('failed',   'Failed'),
-        ('refunded', 'Refunded'),
+        ('paid',        'Paid'),
+        ('failed',      'Failed'),
+        ('refunded',    'Refunded'),
     ]
 
     # Who ordered
-    user           = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
-    email          = models.EmailField()
-    address        = models.TextField()
-    notes          = models.TextField(blank=True, default='')
-    order_type          = models.CharField(max_length=10, choices=ORDER_TYPE_CHOICES, default='regular')
-    downpayment_amount  = models.DecimalField(max_digits=10, decimal_places=2, default=0)
-    remaining_balance   = models.DecimalField(max_digits=10, decimal_places=2, default=0)
-    event_date          = models.DateField(null=True, blank=True, help_text="Para sa bulk/catering orders")
-    pax                 = models.PositiveIntegerField(default=0, help_text="Number of persons")
+    user    = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+    email   = models.EmailField()
+    address = models.TextField()
+    notes   = models.TextField(blank=True, default='')
+
+    order_type         = models.CharField(max_length=10, choices=ORDER_TYPE_CHOICES, default='regular')
+    downpayment_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    remaining_balance  = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    event_date         = models.DateField(null=True, blank=True, help_text="Para sa bulk/catering orders")
+    pax                = models.PositiveIntegerField(default=0, help_text="Number of persons")
+    table_number       = models.CharField(max_length=10, blank=True, default='')
+
+    # Delivery Zone (regular + bulk orders lang)
+    zone         = models.ForeignKey(
+                       'TownZone',
+                       on_delete=models.SET_NULL,
+                       null=True, blank=True,
+                       related_name='orders',
+                       help_text='Delivery zone — regular at bulk orders lang'
+                   )
+    delivery_fee = models.DecimalField(max_digits=10, decimal_places=2, default=0)
 
     # Status
-    status         = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
 
     # Payment
     payment_method = models.CharField(max_length=10, choices=PAYMENT_METHOD_CHOICES, default='cod')
@@ -178,12 +204,12 @@ class Order(models.Model):
     gcash_ref      = models.CharField(max_length=100, blank=True, default='')
     paymongo_id    = models.CharField(max_length=100, blank=True, default='')
 
-    created_at     = models.DateTimeField(auto_now_add=True)
-    updated_at     = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
     points_earned = models.PositiveIntegerField(default=0)
     points_used   = models.PositiveIntegerField(default=0)
     discount      = models.DecimalField(max_digits=10, decimal_places=2, default=0)
-    table_number = models.CharField(max_length=10, blank=True, default='')
 
     class Meta:
         ordering = ('-created_at',)
@@ -195,8 +221,12 @@ class Order(models.Model):
         return f"Order #{self.id} — {name}"
 
     @property
-    def total_price(self):
+    def subtotal(self):
         return sum(item.subtotal for item in self.items.all())
+
+    @property
+    def total_price(self):
+        return self.subtotal + self.delivery_fee
 
     @property
     def item_count(self):
@@ -348,3 +378,5 @@ class ActivityLog(models.Model):
     def __str__(self):
         user = self.user.email if self.user else 'System'
         return f'{user} — {self.get_action_display()} — {self.created_at.strftime("%b %d, %Y %H:%M")}'
+
+

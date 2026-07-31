@@ -8,11 +8,11 @@ from rest_framework.decorators import api_view, permission_classes
 from django.views.decorators.csrf import csrf_exempt
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, render
-from .models import Category, Product, Order, OrderItem, CartItem, LoyaltyPoint, Rating
+from .models import Category, Product, Order, OrderItem, CartItem, LoyaltyPoint, Rating, TownZone
 from .serializer import (
     CategorySerializer, ProductSerializer, RatingSerializer,
     OrderSerializer, CreateOrderSerializer,
-    CartItemSerializer, LoyaltyPointSerializer
+    CartItemSerializer, LoyaltyPointSerializer, TownZoneSerializer
 )
 import os
 import hmac
@@ -353,35 +353,48 @@ class OrderListView(generics.ListAPIView):
     def get_queryset(self):
         return Order.objects.filter(user=self.request.user).prefetch_related('items__product', 'items__variant')
 
+class TownZoneListView(generics.ListAPIView):
+    permission_classes = [AllowAny]
+    serializer_class = TownZoneSerializer
+    queryset = TownZone.objects.filter(is_active=True)
 
 class OrderCreateView(APIView):
     permission_classes = [AllowAny]
+
+    GLOBAL_MIN_ORDER = 1000  # ← constant sa taas ng class
 
     def post(self, request):
         serializer = CreateOrderSerializer(data=request.data)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        data = serializer.validated_data
-        user = request.user if request.user.is_authenticated else None
+        data       = serializer.validated_data
+        user       = request.user if request.user.is_authenticated else None
         order_type = data.get('order_type', 'regular')
 
-        # Auto-populate from cart if no items passed
         if user and not data.get('items'):
             cart_items = CartItem.objects.filter(user=user).select_related('product', 'variant')
             if not cart_items.exists():
                 return Response({'error': 'Cart is empty.'}, status=status.HTTP_400_BAD_REQUEST)
             data['items'] = [
-                {
-                    'product': item.product.id,
-                    'variant': item.variant.id if item.variant else None,
-                    'quantity': item.quantity,
-                }
+                {'product': item.product.id, 'variant': item.variant.id if item.variant else None, 'quantity': item.quantity}
                 for item in cart_items
             ]
 
-        # Handle loyalty points discount
-        discount = 0
+        # ─── Zone Validation (regular + bulk — may delivery) ─────
+        zone         = None
+        delivery_fee = 0
+        if order_type in ['regular', 'bulk']:
+            zone_id = data.get('zone_id')
+            if not zone_id:
+                return Response({'error': 'Please select a delivery zone.'}, status=status.HTTP_400_BAD_REQUEST)
+            try:
+                zone = TownZone.objects.get(id=zone_id, is_active=True)
+            except TownZone.DoesNotExist:
+                return Response({'error': 'Selected zone is not available for delivery.'}, status=status.HTTP_400_BAD_REQUEST)
+            delivery_fee = zone.delivery_fee
+
+        discount    = 0
         points_used = 0
         if user and data.get('points_to_use', 0) > 0:
             try:
@@ -394,7 +407,7 @@ class OrderCreateView(APIView):
         order = Order.objects.create(
             user=user,
             email=data['email'],
-            address=data['address'],
+            address=data.get('address', ''),
             notes=data.get('notes', ''),
             payment_method=data['payment_method'],
             discount=discount,
@@ -403,45 +416,56 @@ class OrderCreateView(APIView):
             event_date=data.get('event_date'),
             pax=data.get('pax', 0),
             table_number=data.get('table_number', ''),
+            zone=zone,
+            delivery_fee=delivery_fee,
         )
 
-        total = 0
+        subtotal = 0
         for item_data in data['items']:
-            product  = get_object_or_404(Product, pk=item_data['product'])
-            variant  = None
-            price    = product.price
+            product = get_object_or_404(Product, pk=item_data['product'])
+            variant = None
+            price   = product.price
             if item_data.get('variant'):
                 from .models import Variant
                 variant = get_object_or_404(Variant, pk=item_data['variant'])
                 price  += variant.additional_price
             quantity = item_data.get('quantity', 1)
-            OrderItem.objects.create(
-                order=order, product=product,
-                variant=variant, quantity=quantity, price=price,
-            )
-            total += price * quantity
+            OrderItem.objects.create(order=order, product=product, variant=variant, quantity=quantity, price=price)
+            subtotal += price * quantity
 
-        # Compute downpayment for bulk orders (50%)
+        # ─── Global Minimum Order (regular + bulk lang) ─────────────
+        if order_type in ['regular', 'bulk'] and subtotal < self.GLOBAL_MIN_ORDER:
+            order.delete()
+            return Response({
+                'error': f'Minimum order amount is ₱{self.GLOBAL_MIN_ORDER:.2f}. Your order subtotal is ₱{subtotal:.2f}.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # ─── Minimum order check para sa zone ─────────────────────
+        if zone and zone.min_order_amount > 0 and subtotal < zone.min_order_amount:
+            order.delete()
+            return Response({
+                'error': f'Minimum order for {zone.name} is ₱{zone.min_order_amount}. Your order subtotal is ₱{subtotal}.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
         if order_type == 'bulk':
-            downpayment = round(total * Decimal('0.50'), 2)
+            from decimal import Decimal
+            grand_total              = subtotal + delivery_fee
+            downpayment              = round(grand_total * Decimal('0.50'), 2)
             order.downpayment_amount = downpayment
-            order.remaining_balance  = total - downpayment
+            order.remaining_balance  = grand_total - downpayment
             order.payment_status     = 'unpaid'
 
-        # Earn loyalty points
         if user:
-            loyalty, _ = LoyaltyPoint.objects.get_or_create(user=user)
-            earned           = loyalty.earn(total - discount)
-            order.points_earned = earned
+            loyalty, _          = LoyaltyPoint.objects.get_or_create(user=user)
+            earned               = loyalty.earn(subtotal - discount)
+            order.points_earned  = earned
 
         order.save()
 
-        # Clear cart — regular orders lang
         if user and order_type == 'regular':
             CartItem.objects.filter(user=user).delete()
 
         return Response(OrderSerializer(order).data, status=status.HTTP_201_CREATED)
-
 
 class OrderDetailView(generics.RetrieveAPIView):
     permission_classes = [AllowAny]
