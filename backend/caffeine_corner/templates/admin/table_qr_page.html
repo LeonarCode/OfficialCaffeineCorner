@@ -1,23 +1,37 @@
 {% extends 'admin/base_site.html' %}
+{% load i18n %}
 
 {% block content %}
-<div style="padding:24px;">
-  <div style="display:flex; align-items:center; gap:12px; margin-bottom:24px;">
-    <a href="/admin/" style="background:#f3f4f6; color:#374151; font-size:12px; font-weight:600; padding:8px 12px; border-radius:8px; text-decoration:none;">← Dashboard</a>
-    <h1 style="color:#2C1503; font-size:20px; font-weight:700; margin:0;">Dine-in QR Codes</h1>
+<div class="flex flex-col gap-6">
+
+  <div class="flex items-center gap-3 flex-wrap">
+    <a href="/admin/"
+       class="font-medium inline-flex items-center gap-1 rounded-default whitespace-nowrap px-3 py-1.5 text-sm border border-base-200 bg-white shadow-xs text-important dark:border-base-700 dark:bg-transparent hover:bg-base-100/80 dark:hover:bg-base-800/80">
+      <span class="material-symbols-outlined text-sm -ml-0.5">arrow_back</span>
+      {% trans "Dashboard" %}
+    </a>
+    <h1 class="text-xl font-bold text-font-important-light dark:text-font-important-dark m-0">{% trans "Dine-in QR Codes" %}</h1>
   </div>
 
-  <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(200px, 1fr)); gap:16px;">
+  <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
     {% for table in tables %}
-    <div style="background:white; border-radius:16px; padding:20px; box-shadow:0 1px 4px rgba(0,0,0,0.06); text-align:center;">
-      <p style="color:#2C1503; font-weight:700; font-size:14px; margin:0 0 12px;">Table {{ table.number }}</p>
-      <img src="data:image/png;base64,{{ table.qr_b64 }}" alt="Table {{ table.number }} QR" style="width:160px; height:160px;" />
-      <p style="color:#9ca3af; font-size:10px; margin:8px 0 12px; word-break:break-all;">{{ table.url }}</p>
-      <a href="/admin/table-qr/{{ table.number }}/" style="display:block; background:#2C1503; color:white; font-size:12px; font-weight:600; padding:8px; border-radius:8px; text-decoration:none;">
-        ⬇️ Download PNG
+    <div class="flex flex-col items-center bg-white dark:bg-base-900 border border-base-200 dark:border-base-800 rounded-default shadow-xs p-5 text-center">
+      <p class="font-semibold text-sm text-font-important-light dark:text-font-important-dark mb-3">{% trans "Table" %} {{ table.number }}</p>
+
+      <div class="w-40 aspect-square bg-white p-2 rounded-default border border-base-200">
+        <img src="data:image/png;base64,{{ table.qr_b64 }}" alt="{% trans 'Table' %} {{ table.number }} QR" class="w-full h-full">
+      </div>
+
+      <p class="text-xs text-font-subtle-light dark:text-font-subtle-dark mt-3 mb-4 truncate w-full" title="{{ table.url }}">{{ table.url }}</p>
+
+      <a href="/admin/table-qr/{{ table.number }}/"
+         class="w-full font-medium inline-flex items-center justify-center gap-1 rounded-default whitespace-nowrap px-3 py-2 text-sm border border-base-200 bg-primary-600 border-transparent text-white hover:bg-primary-600/80">
+        <span class="material-symbols-outlined text-sm -ml-0.5">download</span>
+        {% trans "Download PNG" %}
       </a>
     </div>
     {% endfor %}
   </div>
+
 </div>
 {% endblock %}

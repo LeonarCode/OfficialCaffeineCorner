@@ -1,0 +1,45 @@
+{% extends 'admin/change_list.html' %}
+{% load i18n admin_urls %}
+
+{% block result_list %}
+{% if cl.result_list %}
+<div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 pb-6">
+  {% for product in cl.result_list %}
+  <a href="{% url opts|admin_urlname:'change' product.pk %}"
+     class="group flex flex-col bg-white dark:bg-base-900 border border-base-200 dark:border-base-800 rounded-default shadow-xs overflow-hidden hover:border-base-300 dark:hover:border-base-700 hover:shadow-md transition-all">
+    <div class="relative aspect-square bg-base-100 dark:bg-base-800 overflow-hidden">
+      {% if product.image %}
+        <img src="{{ product.image.url }}" alt="{{ product.name }}" class="w-full h-full object-cover">
+      {% else %}
+        <div class="w-full h-full flex items-center justify-center">
+          <span class="material-symbols-outlined text-4xl text-base-300 dark:text-base-600">local_cafe</span>
+        </div>
+      {% endif %}
+
+      {% if not product.is_available %}
+        <span class="absolute top-2 left-2 inline-block font-semibold rounded-default text-xs px-2 py-1 bg-base-900/80 text-white">{% trans "Unavailable" %}</span>
+      {% endif %}
+
+      {% if product.is_featured %}
+        <span class="absolute top-2 right-2 inline-block font-semibold rounded-default text-xs px-2 py-1 bg-primary-100 text-primary-700 dark:bg-primary-500/20 dark:text-primary-400">★ {% trans "Featured" %}</span>
+      {% endif %}
+    </div>
+
+    <div class="flex flex-col gap-1 p-3 grow">
+      <p class="font-semibold text-sm text-font-important-light dark:text-font-important-dark truncate">{{ product.name }}</p>
+      <p class="text-xs text-font-subtle-light dark:text-font-subtle-dark">{{ product.category }}</p>
+
+      <div class="mt-auto pt-2 flex items-center justify-between">
+        <span class="font-bold text-sm text-primary-700 dark:text-primary-400">₱{{ product.price }}</span>
+        {% if product.is_seasonal %}
+          <span class="material-symbols-outlined text-sm text-orange-600 dark:text-orange-400" title="{% trans 'Seasonal' %}">eco</span>
+        {% endif %}
+      </div>
+    </div>
+  </a>
+  {% endfor %}
+</div>
+{% else %}
+  <p class="text-center text-sm text-font-subtle-light dark:text-font-subtle-dark py-12">{% trans "No products found." %}</p>
+{% endif %}
+{% endblock %}

@@ -21,6 +21,7 @@ import json
 import base64
 import hashlib
 import requests
+from django.contrib import admin
 from django.contrib.admin.views.decorators import staff_member_required
 
 import qrcode, io, base64
@@ -32,27 +33,6 @@ def print_order_receipt(request, order_id):
         id=order_id
     )
     return render(request, 'admin/order_receipt.html', {'order': order})
-
-@staff_member_required
-def table_qr_page(request):
-    
-    tables = []
-    for i in range(1, 6):
-        url = f'http://localhost:5173/menu?table={i}'
-        qr  = qrcode.QRCode(version=1, box_size=8, border=3)
-        qr.add_data(url)
-        qr.make(fit=True)
-        img    = qr.make_image(fill_color='#2C1503', back_color='white')
-        buffer = io.BytesIO()
-        img.save(buffer, format='PNG')
-        buffer.seek(0)
-        img_b64 = base64.b64encode(buffer.getvalue()).decode()
-        tables.append({
-            'number': i,
-            'url':    url,
-            'qr_b64': img_b64,
-        })
-    return render(request, 'admin/table_qr_page.html', {'tables': tables})
 
 # ← HUWAG TANGGALIN — para sa download
 @staff_member_required
@@ -88,7 +68,12 @@ def table_qr_page(request):
             'url':    url,
             'qr_b64': base64.b64encode(buffer.getvalue()).decode()
         })
-    return render(request, 'admin/table_qr_page.html', {'tables': tables})
+    context = {
+        **admin.site.each_context(request),
+        'title': 'Dine-in QR Codes',
+        'tables': tables,
+    }
+    return render(request, 'admin/table_qr_page.html', context)
 
 
 def _get_paymongo_headers():

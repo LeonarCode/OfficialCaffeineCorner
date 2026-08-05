@@ -1,19 +1,13 @@
-{% extends 'admin/change_list.html' %}
-
-{% block breadcrumbs %}
-  {{ block.super }}
-  <div style="display:flex; gap:8px; padding:12px 0;">
-    
-      href="/admin/export-orders/?format=excel"
-      style="background:#2e7d4a; color:white; padding:8px 14px; border-radius:8px; font-size:12px; font-weight:600; text-decoration:none;"
-    >
-      📊 Export Excel
-    </a>
-    
-      href="/admin/export-orders/?format=csv"
-      style="background:#1a5494; color:white; padding:8px 14px; border-radius:8px; font-size:12px; font-weight:600; text-decoration:none;"
-    >
-      📄 Export CSV
-    </a>
-  </div>
-{% endblock %}
+{% load i18n %}
+<div class="flex flex-wrap gap-2 mb-4">
+  <a href="/admin/export-orders/?format=excel"
+     class="font-medium inline-flex items-center gap-1 relative rounded-default justify-center whitespace-nowrap cursor-pointer px-3 py-1.5 text-sm border border-base-200 bg-primary-600 border-transparent text-white hover:bg-primary-600/80">
+    <span class="material-symbols-outlined text-sm -ml-0.5">download</span>
+    {% trans "Export Excel" %}
+  </a>
+  <a href="/admin/export-orders/?format=csv"
+     class="font-medium inline-flex items-center gap-1 relative rounded-default justify-center whitespace-nowrap cursor-pointer px-3 py-1.5 text-sm border border-base-200 bg-white shadow-xs text-important dark:border-base-700 dark:bg-transparent hover:bg-base-100/80 dark:hover:bg-base-800/80">
+    <span class="material-symbols-outlined text-sm -ml-0.5">description</span>
+    {% trans "Export CSV" %}
+  </a>
+</div>

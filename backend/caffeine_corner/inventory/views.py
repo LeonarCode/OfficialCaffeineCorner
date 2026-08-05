@@ -1,9 +1,11 @@
+from django.contrib import admin
 from django.contrib.admin.views.decorators import staff_member_required
 from django.shortcuts import render
 # inventory/views.py
 from django.db.models import Sum, F, Count, Avg
 from django.utils import timezone
 import datetime
+import json
 from online_shop.models import Order, Product, LoyaltyPoint, OrderItem, Notification, ActivityLog
 from inventory.models import Inventory, PurchaseOrder, PurchaseOrderItem
 from rest_framework.views import APIView
@@ -373,10 +375,13 @@ def _export_excel(orders):
 def sales_report_view(request):
     current_year = timezone.now().year
     years = list(range(current_year - 3, current_year + 1))
-    return render(request, 'admin/sales_report.html', {
+    context = {
+        **admin.site.each_context(request),
+        'title': 'Sales Report',
         'current_year': current_year,
         'years': years,
-    })
+    }
+    return render(request, 'admin/sales_report.html', context)
 
 def dashboard_callback(request, context):
 
@@ -431,40 +436,78 @@ def dashboard_callback(request, context):
     unread_notifications = Notification.objects.filter(is_read=False).order_by('-created_at')[:5]
 
     recent_logs = ActivityLog.objects.select_related('user').order_by('-created_at')[:8]
+
+    # Icon + badge-variant per notification type, resolved server-side so the
+    # template stays presentation-only (no type-string branching there).
+    NOTIF_STYLES = {
+        'new_order':    ('shopping_cart', 'primary'),
+        'bulk_order':   ('restaurant',    'warning'),
+        'low_stock':    ('warning',       'danger'),
+        'payment_paid': ('check_circle',  'success'),
+    }
+
+    # Same idea for the activity feed dot color.
+    LOG_VARIANTS = {
+        'order_created':   'success',
+        'order_updated':   'info',
+        'order_cancelled': 'danger',
+        'payment_paid':    'success',
+        'product_created': 'primary',
+        'product_updated': 'info',
+        'user_login':      'warning',
+        'stock_movement':  'base',
+    }
+
+    # Chart.js dataset — colors reference Unfold's CSS variables so the chart
+    # automatically matches the active primary color and light/dark theme.
+    chart_data = {
+        "labels": [d.strftime('%b %d') for d in days],
+        "datasets": [{
+            "label": "Orders",
+            "data": order_counts,
+            "backgroundColor": "var(--color-primary-600)",
+            "borderColor": "var(--color-primary-600)",
+            "borderWidth": 0,
+            "borderRadius": 4,
+            "maxBarThickness": 18,
+        }],
+    }
+    chart_options = {
+        "plugins": {"legend": {"display": False}},
+        "scales": {
+            "y": {"beginAtZero": True, "ticks": {"precision": 0}},
+            "x": {"ticks": {"maxTicksLimit": 10}},
+        },
+    }
+
     context.update({
         'unread_count': Notification.objects.filter(is_read=False).count(),
         'unread_notifications': [
             {
-                'id':         n.id, 
+                'id':         n.id,
                 'title':      n.title,
                 'message':    n.message,
                 'type':       n.type,
+                'icon':       NOTIF_STYLES.get(n.type, ('campaign', 'base'))[0],
+                'variant':    NOTIF_STYLES.get(n.type, ('campaign', 'base'))[1],
                 'created_at': n.created_at.strftime('%b %d, %Y %H:%M'),
                 'order_id':   n.order.id if n.order else None,
             }
             for n in unread_notifications
         ],
         "kpi": [
-            {"title": "Total Orders", "metric": str(total_orders), "icon": "shopping_cart"},
-            {"title": "Revenue", "metric": f"₱{revenue:,.2f}", "icon": "payments"},
-            {"title": "Active Products", "metric": str(active_products), "icon": "coffee"},
-            {"title": "Low Stock", "metric": str(low_stock) if low_stock else "—", "icon": "warning"},
+            {"title": "Total Orders", "metric": str(total_orders), "icon": "shopping_cart", "variant": "primary"},
+            {"title": "Revenue", "metric": f"₱{revenue:,.2f}", "icon": "payments", "variant": "success"},
+            {"title": "Active Products", "metric": str(active_products), "icon": "coffee", "variant": "info"},
+            {"title": "Low Stock", "metric": str(low_stock) if low_stock else "—", "icon": "warning", "variant": "danger" if low_stock else "base"},
         ],
-        "chart": {
-            "labels": [d.strftime('%b %d') for d in days],
-            "datasets": [{
-                "label": "Orders",
-                "data": order_counts,
-                "backgroundColor": "rgba(111, 78, 55, 0.7)",
-                "borderColor": "#6f4e37",
-                "borderWidth": 1,
-            }],
-        
-        },
+        "chart_json": json.dumps(chart_data),
+        "chart_options_json": json.dumps(chart_options),
         'recent_logs': [
             {
                 'action':     log.get_action_display(),
                 'action_key': log.action,
+                'variant':    LOG_VARIANTS.get(log.action, 'base'),
                 'user':       log.user.email if log.user else 'System',
                 'details':    log.details,
                 'created_at': log.created_at.strftime('%b %d, %H:%M'),

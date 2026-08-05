@@ -97,6 +97,7 @@ TEMPLATES = [
                 'django.template.context_processors.request',
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
+                'caffeine_corner.context_processors.unfold_admin_theme',
             ],
         },
     },
@@ -218,6 +219,12 @@ UNFOLD = {
     "SHOW_HISTORY": True,
     "SHOW_VIEW_ON_SITE": False,
     "DASHBOARD_CALLBACK": "inventory.views.dashboard_callback",
+    "LOGIN": {
+        "image": lambda request: static("img/Background.jpeg"),
+    },
+    "STYLES": [
+        lambda request: static("css/admin-theme.css"),
+    ],
     "COLORS": {
         "primary": {
             "50":  "254 249 245",

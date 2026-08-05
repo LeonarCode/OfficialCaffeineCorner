@@ -7,6 +7,26 @@ from .models import ActivityLog, Category, Product, Variant, Rating, Order, Orde
 from unfold.decorators import action
 
 
+# ─── Helpers ──────────────────────────────────────────────────────────────────
+# Badge colors reuse Unfold's own label palette (bg-x-100/text-x-700 in light,
+# dark:bg-x-500/20/dark:text-x-400 in dark) so they stay correct in both themes.
+BADGE_VARIANTS = {
+    'info':    'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-400',
+    'danger':  'bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-400',
+    'warning': 'bg-orange-100 text-orange-700 dark:bg-orange-500/20 dark:text-orange-400',
+    'success': 'bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-400',
+    'primary': 'bg-primary-100 text-primary-700 dark:bg-primary-500/20 dark:text-primary-400',
+    'base':    'bg-base-500/8 text-base-700 dark:bg-base-500/20 dark:text-base-200',
+}
+
+
+def _badge(label, variant='base'):
+    return format_html(
+        '<span class="inline-block font-semibold rounded-default text-[11px] px-2 py-1 whitespace-nowrap {}">{}</span>',
+        BADGE_VARIANTS.get(variant, BADGE_VARIANTS['base']), label,
+    )
+
+
 @admin.action(description='✅ Mark as Confirmed')
 def mark_confirmed(modeladmin, request, queryset):
     updated = queryset.exclude(status='cancelled').update(status='confirmed')
@@ -47,25 +67,22 @@ class NotificationAdmin(ModelAdmin):
     ordering      = ['-created_at']
 
     TYPE_ICONS = {
-        'new_order':    ('🛒', '#eaf5ed', '#2e7d4a'),
-        'bulk_order':   ('🍽️', '#fff6e0', '#a06010'),
-        'low_stock':    ('⚠️', '#fef0ee', '#c04a3a'),
-        'payment_paid': ('✅', '#e6f0fa', '#1a5494'),
+        'new_order':    ('🛒', 'success'),
+        'bulk_order':   ('🍽️', 'warning'),
+        'low_stock':    ('⚠️', 'danger'),
+        'payment_paid': ('✅', 'info'),
     }
 
     def show_type(self, obj):
-        icon, bg, color = self.TYPE_ICONS.get(obj.type, ('📢', '#f1efe8', '#5f5e5a'))
-        return format_html(
-            '<span style="background:{};color:{};padding:3px 10px;border-radius:5px;font-size:11px;font-weight:500;">{} {}</span>',
-            bg, color, icon, obj.get_type_display()
-        )
+        icon, variant = self.TYPE_ICONS.get(obj.type, ('📢', 'base'))
+        return _badge(f'{icon} {obj.get_type_display()}', variant)
     show_type.short_description = 'Type'
 
     def mark_read_link(self, obj):
         if obj.is_read:
-            return format_html('<span style="color:#9ca3af;font-size:11px;">✓ Read</span>')
+            return mark_safe('<span class="text-base-400 dark:text-base-500 text-xs">✓ Read</span>')
         return format_html(
-            '<a href="/admin/mark-notification-read/{}/" style="color:#6f4e37;font-size:11px;font-weight:600;">Mark as Read</a>',
+            '<a href="/admin/mark-notification-read/{}/" class="text-primary-600 dark:text-primary-500 hover:text-primary-700 dark:hover:text-primary-400 text-xs font-semibold">Mark as Read</a>',
             obj.id
         )
     mark_read_link.short_description = 'Action'
@@ -105,7 +122,6 @@ class OrderItemInline(TabularInline):
 @admin.register(Product)
 class ProductAdmin(ModelAdmin):
     list_display = ['name', 'category', 'price', 'is_available', 'is_featured', 'is_seasonal', 'sort_order']
-    list_editable = ['price', 'is_available', 'is_featured', 'is_seasonal', 'sort_order']
     list_filter = ['category', 'is_available', 'is_featured', 'is_seasonal']
     search_fields = ['name', 'sku']
     inlines = [VariantInline]
@@ -113,6 +129,7 @@ class ProductAdmin(ModelAdmin):
 
 @admin.register(Order)
 class OrderAdmin(ModelAdmin):
+    list_before_template = 'admin/order_change_list.html'
     list_display    = ['id', 'email', 'phone', 'order_type', 'show_status', 'payment_method', 'show_payment_status', 'total_price', 'created_at', 'print_receipt_link']
     list_filter     = ['status', 'payment_method', 'payment_status', 'order_type']
     search_fields   = ['email', 'phone', 'id']
@@ -128,48 +145,40 @@ class OrderAdmin(ModelAdmin):
     ]
 
     STATUS_COLORS = {
-        'pending':    ('#fff6e0', '#a06010'),
-        'confirmed':  ('#e6f0fa', '#1a5494'),
-        'processing': ('#f3e8ff', '#7c3aed'),
-        'delivered':  ('#eaf5ed', '#2e7d4a'),
-        'cancelled':  ('#fef0ee', '#c04a3a'),
+        'pending':    'warning',
+        'confirmed':  'info',
+        'processing': 'primary',
+        'delivered':  'success',
+        'cancelled':  'danger',
     }
 
     PAYMENT_COLORS = {
-        'unpaid':      ('#fef0ee', '#c04a3a'),
-        'downpayment': ('#fff6e0', '#a06010'),
-        'paid':        ('#eaf5ed', '#2e7d4a'),
-        'failed':      ('#fef0ee', '#c04a3a'),
-        'refunded':    ('#f1efe8', '#5f5e5a'),
+        'unpaid':      'danger',
+        'downpayment': 'warning',
+        'paid':        'success',
+        'failed':      'danger',
+        'refunded':    'base',
     }
 
     def show_status(self, obj):
-        bg, fg = self.STATUS_COLORS.get(obj.status, ('#f1efe8', '#5f5e5a'))
-        return format_html(
-            '<span style="background:{};color:{};padding:3px 10px;border-radius:5px;font-size:11px;font-weight:500;">{}</span>',
-            bg, fg, obj.get_status_display()
-        )
+        return _badge(obj.get_status_display(), self.STATUS_COLORS.get(obj.status, 'base'))
     show_status.short_description = 'Status'
     show_status.admin_order_field = 'status'
 
     def show_payment_status(self, obj):
-        bg, fg = self.PAYMENT_COLORS.get(obj.payment_status, ('#f1efe8', '#5f5e5a'))
-        return format_html(
-            '<span style="background:{};color:{};padding:3px 10px;border-radius:5px;font-size:11px;font-weight:500;">{}</span>',
-            bg, fg, obj.get_payment_status_display()
-        )
-    
+        return _badge(obj.get_payment_status_display(), self.PAYMENT_COLORS.get(obj.payment_status, 'base'))
+    show_payment_status.short_description = 'Payment Status'
+    show_payment_status.admin_order_field = 'payment_status'
+
     def print_receipt_link(self, obj):
         return format_html(
             '<a href="/admin/orders/{}/receipt/" target="_blank" '
-            'style="background:#2C1503; color:white; padding:4px 10px; '
-            'border-radius:6px; font-size:11px; font-weight:600; text-decoration:none;">'
-            '🖨️ Print</a>',
+            'class="font-medium inline-flex items-center gap-1 rounded-default whitespace-nowrap '
+            'px-2.5 py-1 text-[11px] border border-base-200 bg-primary-600 border-transparent '
+            'text-white hover:bg-primary-600/80">🖨️ Print</a>',
             obj.id
         )
     print_receipt_link.short_description = 'Receipt'
-    show_payment_status.short_description = 'Payment Status'
-    show_payment_status.admin_order_field = 'payment_status'
 
 
 
@@ -208,29 +217,25 @@ class ActivityLogAdmin(ModelAdmin):
         return request.user.is_superuser  # only superuser can delete logs
 
     ACTION_COLORS = {
-        'order_created':   ('#eaf5ed', '#2e7d4a'),
-        'order_updated':   ('#e6f0fa', '#1a5494'),
-        'order_cancelled': ('#fef0ee', '#c04a3a'),
-        'payment_paid':    ('#eaf5ed', '#2e7d4a'),
-        'product_created': ('#f3e8ff', '#7c3aed'),
-        'product_updated': ('#e6f0fa', '#1a5494'),
-        'user_login':      ('#fff6e0', '#a06010'),
-        'stock_movement':  ('#f1efe8', '#5f5e5a'),
+        'order_created':   'success',
+        'order_updated':   'info',
+        'order_cancelled': 'danger',
+        'payment_paid':    'success',
+        'product_created': 'primary',
+        'product_updated': 'info',
+        'user_login':      'warning',
+        'stock_movement':  'base',
     }
 
     def show_action(self, obj):
-        bg, fg = self.ACTION_COLORS.get(obj.action, ('#f1efe8', '#5f5e5a'))
-        return format_html(
-            '<span style="background:{};color:{};padding:3px 10px;border-radius:5px;font-size:11px;font-weight:500;">{}</span>',
-            bg, fg, obj.get_action_display()
-        )
+        return _badge(obj.get_action_display(), self.ACTION_COLORS.get(obj.action, 'base'))
     show_action.short_description = 'Action'
     show_action.admin_order_field = 'action'
 
     def show_user(self, obj):
         if obj.user:
-            return format_html('<span style="font-size:12px;">{}</span>', obj.user.email)
-        return mark_safe('<span style="color:#9ca3af;font-size:12px;">System</span>')
+            return format_html('<span class="text-xs">{}</span>', obj.user.email)
+        return mark_safe('<span class="text-base-400 dark:text-base-500 text-xs">System</span>')
     show_user.short_description = 'User'
 
 @admin.register(TownZone)

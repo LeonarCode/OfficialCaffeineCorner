@@ -9,12 +9,28 @@ from .models import (
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
+# Badge colors reuse Unfold's own label palette (bg-x-100/text-x-700 in light,
+# dark:bg-x-500/20/dark:text-x-400 in dark) so they stay correct in both themes.
+BADGE_VARIANTS = {
+    'info':    'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-400',
+    'danger':  'bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-400',
+    'warning': 'bg-orange-100 text-orange-700 dark:bg-orange-500/20 dark:text-orange-400',
+    'success': 'bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-400',
+    'primary': 'bg-primary-100 text-primary-700 dark:bg-primary-500/20 dark:text-primary-400',
+    'base':    'bg-base-500/8 text-base-700 dark:bg-base-500/20 dark:text-base-200',
+}
 
-def _badge(label, bg, fg):
+BAR_VARIANTS = {
+    'danger':  'bg-red-500',
+    'warning': 'bg-orange-500',
+    'success': 'bg-green-500',
+}
+
+
+def _badge(label, variant='base'):
     return format_html(
-        '<span style="background:{};color:{};padding:3px 10px;border-radius:5px;'
-        'font-size:11px;font-weight:500;white-space:nowrap;">{}</span>',
-        bg, fg, label,
+        '<span class="inline-block font-semibold rounded-default text-[11px] px-2 py-1 whitespace-nowrap {}">{}</span>',
+        BADGE_VARIANTS.get(variant, BADGE_VARIANTS['base']), label,
     )
 
 
@@ -27,20 +43,24 @@ def _stock_bar(qty_on_hand, reorder_points):
         pct = min(int((float(qty_on_hand) / float(reorder_points)) * 50), 100)
 
     if qty_on_hand <= reorder_points:
-        color = "#c04a3a"
+        variant = 'danger'
     elif qty_on_hand <= reorder_points * Decimal('2'):
-        color = "#a06010"
+        variant = 'warning'
     else:
-        color = "#2e7d4a"
+        variant = 'success'
+
+    text_class = {'danger': 'text-red-700 dark:text-red-400',
+                  'warning': 'text-orange-700 dark:text-orange-400',
+                  'success': 'text-green-700 dark:text-green-400'}[variant]
 
     return format_html(
-        '<div style="display:flex;align-items:center;gap:8px;min-width:120px;">'
-        '  <div style="flex:1;height:6px;background:#e8ddd0;border-radius:3px;overflow:hidden;">'
-        '    <div style="width:{}%;height:100%;background:{};border-radius:3px;"></div>'
-        '  </div>'
-        '  <span style="font-size:12px;font-weight:500;color:{};">{}</span>'
+        '<div class="flex items-center gap-2">'
+        '<div class="w-24 h-1.5 bg-base-100 dark:bg-base-800 rounded-full overflow-hidden">'
+        '<div class="h-full rounded-full {}" style="width:{}%"></div>'
+        '</div>'
+        '<span class="text-xs font-medium {}">{}</span>'
         '</div>',
-        pct, color, color, qty_on_hand,
+        BAR_VARIANTS[variant], pct, text_class, qty_on_hand,
     )
 
 
@@ -96,43 +116,43 @@ class InventoryAdmin(ModelAdmin):
 
     def show_reserved(self, obj):
         if obj.quantity_reserved == 0:
-            return mark_safe('<span style="color:#b4b2a9;">—</span>')
+            return mark_safe('<span class="text-base-400 dark:text-base-500">—</span>')
         return format_html(
-            '<span style="color:#a06010;font-weight:500;">{} {}</span>',
+            '<span class="text-orange-700 dark:text-orange-400 font-medium">{} {}</span>',
             obj.quantity_reserved, obj.unit,
         )
     show_reserved.short_description = _('Reserved')
 
     def show_stock_status(self, obj):
         if obj.quantity_on_hand == 0:
-            return _badge('Out of Stock', '#fef0ee', '#c04a3a')
+            return _badge('Out of Stock', 'danger')
         if obj.is_low_stock:
-            return _badge('Low Stock', '#fff6e0', '#a06010')
-        return _badge('OK', '#eaf5ed', '#2e7d4a')
+            return _badge('Low Stock', 'warning')
+        return _badge('OK', 'success')
     show_stock_status.short_description = _('Status')
 
     def show_stock_value(self, obj):
         value = float(obj.stock_value)  # ← i-convert sa float
         if value == 0:
-            return mark_safe('<span style="color:#b4b2a9;">₱0.00</span>')
+            return mark_safe('<span class="text-base-400 dark:text-base-500">₱0.00</span>')
         return format_html(
-            '<span style="font-weight:600;">₱{}</span>',
+            '<span class="font-semibold">₱{}</span>',
             f"{value:,.2f}",
         )
     show_stock_value.short_description = _('Stock Value')
 
     def show_expiry_status(self, obj):
         if not obj.expiry_date:
-            return mark_safe('<span style="color:#b4b2a9;">—</span>')
+            return mark_safe('<span class="text-base-400 dark:text-base-500">—</span>')
         from django.utils import timezone
         days_left = (obj.expiry_date - timezone.now().date()).days
         if days_left < 0:
-            return _badge('Expired', '#fef0ee', '#c04a3a')
+            return _badge('Expired', 'danger')
         elif days_left <= 7:
-            return _badge(f'{days_left}d left', '#fff6e0', '#a06010')
+            return _badge(f'{days_left}d left', 'warning')
         elif days_left <= 30:
-            return _badge(f'{days_left}d left', '#e6f0fa', '#1a5494')
-        return _badge(f'{days_left}d', '#eaf5ed', '#2e7d4a')
+            return _badge(f'{days_left}d left', 'info')
+        return _badge(f'{days_left}d', 'success')
     show_expiry_status.short_description = _('Expiry')
 
 
@@ -162,28 +182,27 @@ class PurchaseOrderAdmin(ModelAdmin):
     inlines         = [PurchaseOrderItemInline]
 
     STATUS_COLORS = {
-        'draft':     ('#f1efe8', '#5f5e5a'),
-        'sent':      ('#e6f0fa', '#1a5494'),
-        'partial':   ('#fff6e0', '#a06010'),
-        'received':  ('#eaf5ed', '#2e7d4a'),
-        'cancelled': ('#fef0ee', '#c04a3a'),
+        'draft':     'base',
+        'sent':      'info',
+        'partial':   'warning',
+        'received':  'success',
+        'cancelled': 'danger',
     }
 
     def show_status(self, obj):
-        bg, fg = self.STATUS_COLORS.get(obj.status, ('#f1efe8', '#5f5e5a'))
-        return _badge(obj.get_status_display(), bg, fg)
+        return _badge(obj.get_status_display(), self.STATUS_COLORS.get(obj.status, 'base'))
     show_status.short_description = 'Status'
 
     def show_total_cost(self, obj):
         total = obj.total_cost
         if total == 0:
-            return mark_safe('<span style="color:#b4b2a9;">₱0.00</span>')
-        return format_html('<span style="font-weight:600;">₱{}</span>', f"{total:,.2f}")
+            return mark_safe('<span class="text-base-400 dark:text-base-500">₱0.00</span>')
+        return format_html('<span class="font-semibold">₱{}</span>', f"{total:,.2f}")
     show_total_cost.short_description = 'Total Cost'
 
     def show_item_count(self, obj):
         count = obj.items.count()
-        return format_html('<span style="font-weight:500;">{} item{}</span>', count, 's' if count != 1 else '')
+        return format_html('<span class="font-medium">{} item{}</span>', count, 's' if count != 1 else '')
     show_item_count.short_description = 'Items'
 
     def changelist_view(self, request, extra_context=None):

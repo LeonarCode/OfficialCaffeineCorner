@@ -1,0 +1,63 @@
+/*
+ * Caffeine Corner admin — branded sidebar & header.
+ * Stays dark-brown in both light and dark admin themes (like most SaaS
+ * dashboards with a branded nav rail), reusing the primary color scale
+ * already configured in UNFOLD["COLORS"] so it tracks brand changes.
+ *
+ * Note: Unfold's --color-primary-* variables are already complete color
+ * values (e.g. `rgb(85, 48, 16)`), not raw "R G B" triplets — so they're
+ * used directly as `var(--color-primary-900)`, never wrapped in rgb().
+ *
+ * !important is required: this file loads before Unfold's own compiled
+ * styles.css, so plain-specificity rules would otherwise be overridden.
+ */
+
+.cc-sidebar,
+.cc-header {
+  background-color: var(--color-primary-900) !important;
+}
+
+.cc-sidebar-header {
+  border-color: var(--color-primary-800) !important;
+}
+.cc-sidebar-header * {
+  color: var(--color-primary-50) !important;
+}
+
+.cc-sidebar hr {
+  border-color: var(--color-primary-800) !important;
+}
+
+.cc-sidebar h2 {
+  color: var(--color-primary-300) !important;
+}
+
+/* bottom user-profile row (avatar + name/email) */
+.cc-sidebar .text-important,
+.cc-sidebar .text-subtle {
+  color: var(--color-primary-50) !important;
+}
+
+#nav-sidebar-apps a {
+  color: var(--color-primary-100) !important;
+}
+#nav-sidebar-apps a:hover {
+  color: #fff !important;
+  background-color: var(--color-primary-800) !important;
+}
+#nav-sidebar-apps a.active {
+  background-color: var(--color-primary-700) !important;
+  color: #fff !important;
+}
+
+.cc-header {
+  color: var(--color-primary-50) !important;
+  border-color: var(--color-primary-800) !important;
+}
+/* Color everything in the flat header bar, but not floating dropdown
+   panels (account menu, theme switcher) — those stay on their own white
+   popup background regardless of the header color, via Unfold's
+   convention of marking such panels with `.absolute`. */
+.cc-header *:not(.absolute):not(.absolute *) {
+  color: var(--color-primary-50) !important;
+}

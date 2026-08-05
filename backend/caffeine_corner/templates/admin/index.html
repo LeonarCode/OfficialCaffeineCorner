@@ -2,213 +2,171 @@
 {% load i18n %}
 
 {% block content %}
+<div class="flex flex-col gap-6">
 
-<!-- Notifications -->
-{% if unread_notifications %}
-<div style="background:white; border-radius:12px; padding:20px; box-shadow:0 1px 4px rgba(0,0,0,0.06); margin-bottom:20px;">
-  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-    <div style="display:flex; align-items:center; gap:8px;">
-      <p style="color:#2C1503; font-weight:600; font-size:14px; margin:0;">Notifications</p>
-      <span style="background:#c04a3a; color:white; font-size:10px; font-weight:700; padding:2px 8px; border-radius:99px;">
-        {{ unread_count }} unread
-      </span>
+  <!-- Notifications -->
+  {% if unread_notifications %}
+  <div class="bg-white dark:bg-base-900 border border-base-200 dark:border-base-800 rounded-default shadow-xs p-6">
+    <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
+      <div class="flex items-center gap-2">
+        <h2 class="font-semibold text-[15px] text-font-important-light dark:text-font-important-dark">{% trans "Notifications" %}</h2>
+        <span class="inline-block font-semibold rounded-default text-[11px] px-2 bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-400">{{ unread_count }} {% trans "unread" %}</span>
+      </div>
+      <a href="{% url 'admin:online_shop_notification_changelist' %}" class="text-xs font-medium text-primary-600 dark:text-primary-500 hover:text-primary-700 dark:hover:text-primary-400">{% trans "View all" %} →</a>
     </div>
-    <a href="/admin/online_shop/notification/" style="color:#C4A882; font-size:12px;">View all →</a>
-  </div>
-  {% for notif in unread_notifications %}
-  <div style="display:flex; align-items:start; gap:12px; padding:10px 0; border-bottom:1px solid #f3f4f6;">
-    <span style="font-size:18px; flex-shrink:0;">
-      {% if notif.type == 'new_order' %}🛒
-      {% elif notif.type == 'bulk_order' %}🍽️
-      {% elif notif.type == 'payment_paid' %}✅
-      {% else %}📢{% endif %}
-    </span>
-    <div style="flex:1; min-width:0;">
-      <p style="color:#2C1503; font-size:13px; font-weight:600; margin:0 0 2px; word-break:break-word;">{{ notif.title }}</p>
-      <p style="color:#6b7280; font-size:12px; margin:0 0 2px; word-break:break-word;">{{ notif.message }}</p>
-      <p style="color:#9ca3af; font-size:11px; margin:0;">{{ notif.created_at }}</p>
-    </div>
-    {% if notif.id %}
-    <a href="/admin/mark-notification-read/{{ notif.id }}/"
-       style="color:#6f4e37; font-size:11px; font-weight:600; white-space:nowrap; flex-shrink:0;">
-      Mark read
-    </a>
-    {% endif %}
-  </div>
-  {% endfor %}
-</div>
-{% endif %}
-
-<!-- KPI Cards -->
-<div class="kpi-grid" style="display:grid; grid-template-columns:repeat(2,1fr); gap:12px; margin-bottom:20px;">
-  {% for kpi in kpi %}
-  <div style="background:white; border-radius:12px; padding:16px; box-shadow:0 1px 4px rgba(0,0,0,0.06);">
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-      <p style="color:#6b7280; font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; margin:0;">{{ kpi.title }}</p>
-      <span class="material-symbols-outlined" style="font-size:16px; color:#C4A882;">{{ kpi.icon }}</span>
-    </div>
-    <p style="color:#2C1503; font-size:22px; font-weight:700; margin:0;">{{ kpi.metric }}</p>
-  </div>
-  {% endfor %}
-</div>
-
-<!-- Chart -->
-<div style="background:white; border-radius:12px; padding:20px; box-shadow:0 1px 4px rgba(0,0,0,0.06); margin-bottom:20px;">
-  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; flex-wrap:wrap; gap:8px;">
-    <p style="color:#2C1503; font-weight:600; font-size:14px; margin:0;">Orders — Last 30 Days</p>
-    <p style="color:#6b7280; font-size:12px; margin:0;">Daily order count</p>
-  </div>
-  <canvas id="ordersChart" style="max-height:200px; width:100%;"></canvas>
-</div>
-
-<!-- Low Stock + Top Customers -->
-<div class="side-grid" style="display:grid; grid-template-columns:1fr; gap:16px; margin-bottom:20px;">
-
-  <!-- Low Stock -->
-  <div style="background:white; border-radius:12px; padding:20px; box-shadow:0 1px 4px rgba(0,0,0,0.06);">
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-      <p style="color:#2C1503; font-weight:600; font-size:13px; margin:0;">Low Stock</p>
-      <a href="{% url 'admin:inventory_inventory_changelist' %}" style="color:#C4A882; font-size:11px;">View all →</a>
-    </div>
-    {% if low_stock_items %}
-      {% for item in low_stock_items %}
-      <div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid #f3f4f6; flex-wrap:wrap; gap:4px;">
-        <span style="font-size:12px; color:#374151;">{{ item.name }}</span>
-        <span style="font-size:12px; color:#ef4444; font-weight:600;">{{ item.quantity_on_hand }} {{ item.unit }}</span>
+    <div class="flex flex-col">
+      {% for notif in unread_notifications %}
+      <div class="flex items-start gap-3 py-3 border-b border-base-200 dark:border-base-800 last:border-b-0">
+        <span class="material-symbols-outlined shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-base
+          {% if notif.variant == 'primary' %}bg-primary-100 text-primary-700 dark:bg-primary-500/20 dark:text-primary-400
+          {% elif notif.variant == 'success' %}bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-400
+          {% elif notif.variant == 'warning' %}bg-orange-100 text-orange-700 dark:bg-orange-500/20 dark:text-orange-400
+          {% elif notif.variant == 'danger' %}bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-400
+          {% else %}bg-base-500/8 text-base-700 dark:bg-base-500/20 dark:text-base-200{% endif %}">{{ notif.icon }}</span>
+        <div class="flex-1 min-w-0">
+          <p class="text-sm font-medium text-font-important-light dark:text-font-important-dark truncate">{{ notif.title }}</p>
+          <p class="text-xs text-font-subtle-light dark:text-font-subtle-dark truncate">{{ notif.message }}</p>
+          <p class="text-xs text-base-400 mt-1">{{ notif.created_at }}</p>
+        </div>
+        {% if notif.id %}
+        <a href="/admin/mark-notification-read/{{ notif.id }}/" class="text-xs font-medium text-primary-600 dark:text-primary-500 hover:text-primary-700 dark:hover:text-primary-400 whitespace-nowrap">{% trans "Mark read" %}</a>
+        {% endif %}
       </div>
       {% endfor %}
-    {% else %}
-      <p style="color:#9ca3af; font-size:12px; text-align:center; padding:16px 0;">All stock levels OK ✓</p>
-    {% endif %}
-  </div>
-
-  <!-- Top Customers -->
-  <div style="background:white; border-radius:12px; padding:20px; box-shadow:0 1px 4px rgba(0,0,0,0.06);">
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
-      <p style="color:#2C1503; font-weight:600; font-size:13px; margin:0;">Top Customers</p>
-      <a href="{% url 'admin:online_shop_loyaltypoint_changelist' %}" style="color:#C4A882; font-size:11px;">View all →</a>
     </div>
-    {% if top_customers %}
-      {% for customer in top_customers %}
-      <div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid #f3f4f6; flex-wrap:wrap; gap:4px;">
-        <span style="font-size:12px; color:#374151; word-break:break-all;">{{ customer.email }}</span>
-        <span style="font-size:12px; color:#6f4e37; font-weight:600;">{{ customer.points }} pts</span>
-      </div>
-      {% endfor %}
-    {% else %}
-      <p style="color:#9ca3af; font-size:12px; text-align:center; padding:16px 0;">No loyalty points yet</p>
-    {% endif %}
   </div>
+  {% endif %}
 
-</div>
-
-<!-- Recent Orders Table -->
-<div style="background:white; border-radius:12px; padding:20px; box-shadow:0 1px 4px rgba(0,0,0,0.06); overflow-x:auto;">
-  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
-    <p style="color:#2C1503; font-weight:600; font-size:14px; margin:0;">Recent Orders</p>
-    <a href="{% url 'admin:online_shop_order_changelist' %}" style="color:#C4A882; font-size:12px;">View all →</a>
-  </div>
-  <div style="overflow-x:auto;">
-    <table style="width:100%; border-collapse:collapse; font-size:12px; min-width:500px;">
-      <thead>
-        <tr style="border-bottom:2px solid #f3f4f6;">
-          <th style="text-align:left; padding:8px; color:#6b7280; font-weight:600;">#</th>
-          <th style="text-align:left; padding:8px; color:#6b7280; font-weight:600;">Customer</th>
-          <th style="text-align:left; padding:8px; color:#6b7280; font-weight:600;">Product</th>
-          <th style="text-align:left; padding:8px; color:#6b7280; font-weight:600;">Qty</th>
-          <th style="text-align:left; padding:8px; color:#6b7280; font-weight:600;">Total</th>
-          <th style="text-align:left; padding:8px; color:#6b7280; font-weight:600;">Date</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for order in recent_orders %}
-        <tr style="border-bottom:1px solid #f9fafb;">
-          <td style="padding:10px 8px; color:#2C1503; font-weight:600;">#{{ order.id }}</td>
-          <td style="padding:10px 8px; color:#374151; word-break:break-all;">{{ order.customer }}</td>
-          <td style="padding:10px 8px; color:#374151;">{{ order.product }}</td>
-          <td style="padding:10px 8px; color:#374151;">{{ order.qty }}</td>
-          <td style="padding:10px 8px; color:#2C1503; font-weight:600;">{{ order.sum }}</td>
-          <td style="padding:10px 8px; color:#6b7280; white-space:nowrap;">{{ order.date }}</td>
-        </tr>
-        {% empty %}
-        <tr>
-          <td colspan="6" style="padding:24px; text-align:center; color:#9ca3af;">No orders yet</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</div>
-<!-- Activity Logs -->
-<div style="background:white; border-radius:12px; padding:24px; box-shadow:0 1px 4px rgba(0,0,0,0.06); margin-bottom:24px;">
-  <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
-    <p style="color:#2C1503; font-weight:600; font-size:14px; margin:0;">Recent Activity</p>
-    <a href="{% url 'admin:online_shop_activitylog_changelist' %}" style="color:#C4A882; font-size:12px;">View all →</a>
-  </div>
-  {% if recent_logs %}
-    {% for log in recent_logs %}
-    <div style="display:flex; align-items:start; gap:12px; padding:8px 0; border-bottom:1px solid #f3f4f6;">
-      <div style="width:8px; height:8px; border-radius:50%; margin-top:4px; flex-shrink:0;
-        background:{% if log.action_key == 'order_created' %}#34d399
-        {% elif log.action_key == 'order_cancelled' %}#f87171
-        {% elif log.action_key == 'payment_paid' %}#34d399
-        {% elif log.action_key == 'order_updated' %}#60a5fa
-        {% else %}#9ca3af{% endif %};">
+  <!-- KPI Cards -->
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+    {% for k in kpi %}
+    <div class="bg-white dark:bg-base-900 border border-base-200 dark:border-base-800 rounded-default shadow-xs p-5">
+      <div class="flex items-center justify-between mb-3 gap-2">
+        <span class="text-xs font-semibold uppercase text-font-subtle-light dark:text-font-subtle-dark">{{ k.title }}</span>
+        <span class="material-symbols-outlined w-9 h-9 shrink-0 rounded-full flex items-center justify-center text-base
+          {% if k.variant == 'primary' %}bg-primary-100 text-primary-700 dark:bg-primary-500/20 dark:text-primary-400
+          {% elif k.variant == 'success' %}bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-400
+          {% elif k.variant == 'info' %}bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-400
+          {% elif k.variant == 'danger' %}bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-400
+          {% else %}bg-base-500/8 text-base-700 dark:bg-base-500/20 dark:text-base-200{% endif %}">{{ k.icon }}</span>
       </div>
-      <div style="flex:1; min-width:0;">
-        <p style="color:#374151; font-size:12px; font-weight:600; margin:0 0 1px; word-break:break-word;">{{ log.details }}</p>
-        <p style="color:#9ca3af; font-size:11px; margin:0;">{{ log.user }} · {{ log.created_at }}</p>
-      </div>
+      <p class="text-2xl font-bold text-font-important-light dark:text-font-important-dark">{{ k.metric }}</p>
     </div>
     {% endfor %}
-  {% else %}
-    <p style="color:#9ca3af; font-size:12px; text-align:center; padding:16px 0;">No activity yet.</p>
-  {% endif %}
+  </div>
+
+  <!-- Chart -->
+  <div class="bg-white dark:bg-base-900 border border-base-200 dark:border-base-800 rounded-default shadow-xs p-6">
+    <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
+      <h2 class="font-semibold text-[15px] text-font-important-light dark:text-font-important-dark">{% trans "Orders — Last 30 Days" %}</h2>
+      <span class="text-xs text-font-subtle-light dark:text-font-subtle-dark">{% trans "Daily order count" %}</span>
+    </div>
+    <canvas class="chart" data-type="bar" data-value="{{ chart_json }}" data-options="{{ chart_options_json }}" height="90"></canvas>
+  </div>
+
+  <!-- Low Stock + Top Customers -->
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+    <div class="bg-white dark:bg-base-900 border border-base-200 dark:border-base-800 rounded-default shadow-xs p-6">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="font-semibold text-sm text-font-important-light dark:text-font-important-dark">{% trans "Low Stock" %}</h3>
+        <a href="{% url 'admin:inventory_inventory_changelist' %}" class="text-xs font-medium text-primary-600 dark:text-primary-500 hover:text-primary-700 dark:hover:text-primary-400">{% trans "View all" %} →</a>
+      </div>
+      {% if low_stock_items %}
+        {% for item in low_stock_items %}
+        <div class="flex items-center justify-between gap-2 py-2 border-b border-base-200 dark:border-base-800 last:border-b-0">
+          <span class="text-sm text-font-default-light dark:text-font-default-dark truncate">{{ item.name }}</span>
+          <span class="text-sm font-semibold text-red-700 dark:text-red-400 whitespace-nowrap">{{ item.quantity_on_hand }} {{ item.unit }}</span>
+        </div>
+        {% endfor %}
+      {% else %}
+        <p class="text-xs text-center text-font-subtle-light dark:text-font-subtle-dark py-6">{% trans "All stock levels OK" %} ✓</p>
+      {% endif %}
+    </div>
+
+    <div class="bg-white dark:bg-base-900 border border-base-200 dark:border-base-800 rounded-default shadow-xs p-6">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="font-semibold text-sm text-font-important-light dark:text-font-important-dark">{% trans "Top Customers" %}</h3>
+        <a href="{% url 'admin:online_shop_loyaltypoint_changelist' %}" class="text-xs font-medium text-primary-600 dark:text-primary-500 hover:text-primary-700 dark:hover:text-primary-400">{% trans "View all" %} →</a>
+      </div>
+      {% if top_customers %}
+        {% for customer in top_customers %}
+        <div class="flex items-center justify-between gap-2 py-2 border-b border-base-200 dark:border-base-800 last:border-b-0">
+          <span class="text-sm text-font-default-light dark:text-font-default-dark truncate">{{ customer.email }}</span>
+          <span class="text-sm font-semibold text-primary-700 dark:text-primary-400 whitespace-nowrap">{{ customer.points }} pts</span>
+        </div>
+        {% endfor %}
+      {% else %}
+        <p class="text-xs text-center text-font-subtle-light dark:text-font-subtle-dark py-6">{% trans "No loyalty points yet" %}</p>
+      {% endif %}
+    </div>
+
+  </div>
+
+  <!-- Recent Orders -->
+  <div class="bg-white dark:bg-base-900 border border-base-200 dark:border-base-800 rounded-default shadow-xs p-6">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="font-semibold text-[15px] text-font-important-light dark:text-font-important-dark">{% trans "Recent Orders" %}</h2>
+      <a href="{% url 'admin:online_shop_order_changelist' %}" class="text-xs font-medium text-primary-600 dark:text-primary-500 hover:text-primary-700 dark:hover:text-primary-400">{% trans "View all" %} →</a>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="border-b border-base-200 dark:border-base-800">
+            <th class="text-left font-semibold text-xs uppercase text-font-subtle-light dark:text-font-subtle-dark px-3 py-2 whitespace-nowrap">#</th>
+            <th class="text-left font-semibold text-xs uppercase text-font-subtle-light dark:text-font-subtle-dark px-3 py-2 whitespace-nowrap">{% trans "Customer" %}</th>
+            <th class="text-left font-semibold text-xs uppercase text-font-subtle-light dark:text-font-subtle-dark px-3 py-2 whitespace-nowrap">{% trans "Product" %}</th>
+            <th class="text-left font-semibold text-xs uppercase text-font-subtle-light dark:text-font-subtle-dark px-3 py-2 whitespace-nowrap">{% trans "Qty" %}</th>
+            <th class="text-left font-semibold text-xs uppercase text-font-subtle-light dark:text-font-subtle-dark px-3 py-2 whitespace-nowrap">{% trans "Total" %}</th>
+            <th class="text-left font-semibold text-xs uppercase text-font-subtle-light dark:text-font-subtle-dark px-3 py-2 whitespace-nowrap">{% trans "Date" %}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for order in recent_orders %}
+          <tr class="border-b border-base-200 dark:border-base-800 last:border-b-0 hover:bg-base-100/80 dark:hover:bg-base-800/80">
+            <td class="px-3 py-2.5 font-semibold text-font-important-light dark:text-font-important-dark whitespace-nowrap">#{{ order.id }}</td>
+            <td class="px-3 py-2.5 text-font-default-light dark:text-font-default-dark">{{ order.customer }}</td>
+            <td class="px-3 py-2.5 text-font-default-light dark:text-font-default-dark whitespace-nowrap">{{ order.product }}</td>
+            <td class="px-3 py-2.5 text-font-default-light dark:text-font-default-dark">{{ order.qty }}</td>
+            <td class="px-3 py-2.5 font-semibold text-font-important-light dark:text-font-important-dark whitespace-nowrap">{{ order.sum }}</td>
+            <td class="px-3 py-2.5 text-font-subtle-light dark:text-font-subtle-dark whitespace-nowrap">{{ order.date }}</td>
+          </tr>
+          {% empty %}
+          <tr>
+            <td colspan="6" class="text-center py-8 text-font-subtle-light dark:text-font-subtle-dark">{% trans "No orders yet" %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Recent Activity -->
+  <div class="bg-white dark:bg-base-900 border border-base-200 dark:border-base-800 rounded-default shadow-xs p-6">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="font-semibold text-[15px] text-font-important-light dark:text-font-important-dark">{% trans "Recent Activity" %}</h2>
+      <a href="{% url 'admin:online_shop_activitylog_changelist' %}" class="text-xs font-medium text-primary-600 dark:text-primary-500 hover:text-primary-700 dark:hover:text-primary-400">{% trans "View all" %} →</a>
+    </div>
+    {% if recent_logs %}
+      {% for log in recent_logs %}
+      <div class="flex items-start gap-3 py-2.5 border-b border-base-200 dark:border-base-800 last:border-b-0">
+        <div class="w-2 h-2 rounded-full mt-1 shrink-0
+          {% if log.variant == 'success' %}bg-green-400
+          {% elif log.variant == 'danger' %}bg-red-400
+          {% elif log.variant == 'warning' %}bg-orange-400
+          {% elif log.variant == 'info' %}bg-blue-400
+          {% elif log.variant == 'primary' %}bg-primary-500
+          {% else %}bg-base-300 dark:bg-base-600{% endif %}"></div>
+        <div class="flex-1 min-w-0">
+          <p class="text-sm font-medium text-font-default-light dark:text-font-default-dark truncate">{{ log.details }}</p>
+          <p class="text-xs text-font-subtle-light dark:text-font-subtle-dark">{{ log.user }} · {{ log.created_at }}</p>
+        </div>
+      </div>
+      {% endfor %}
+    {% else %}
+      <p class="text-xs text-center text-font-subtle-light dark:text-font-subtle-dark py-6">{% trans "No activity yet." %}</p>
+    {% endif %}
+  </div>
+
 </div>
-
-<!-- Responsive styles -->
-<style>
-  @media (min-width: 768px) {
-    .kpi-grid {
-      grid-template-columns: repeat(4, 1fr) !important;
-    }
-    .side-grid {
-      grid-template-columns: 1fr 1fr !important;
-    }
-  }
-  @media (min-width: 1024px) {
-    .side-grid {
-      grid-template-columns: 1fr 1fr !important;
-    }
-  }
-</style>
-
-<!-- Chart.js -->
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script>
-  const ctx = document.getElementById('ordersChart').getContext('2d');
-  new Chart(ctx, {
-    type: 'bar',
-    data: {
-      labels: {{ chart.labels|safe }},
-      datasets: [{
-        label: 'Orders',
-        data: {{ chart.datasets.0.data|safe }},
-        backgroundColor: 'rgba(111, 78, 55, 0.7)',
-        borderColor: '#6f4e37',
-        borderWidth: 1,
-        borderRadius: 4,
-      }]
-    },
-    options: {
-      responsive: true,
-      plugins: { legend: { display: false } },
-      scales: {
-        y: { beginAtZero: true, ticks: { stepSize: 1 } },
-        x: { ticks: { maxTicksLimit: 10 } }
-      }
-    }
-  });
-</script>
-
 {% endblock %}
