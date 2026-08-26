@@ -8,6 +8,7 @@ import { useAuth } from '../context/AuthContext'
 
 const STEPS = ['Order Type', 'Delivery', 'Payment']
 const GLOBAL_MIN_ORDER = 1000
+const DOWNPAYMENT_RATES = { regular: 0.30, bulk: 0.50 }
 
 const Checkout = () => {
   const [cartItems,      setCartItems]      = useState([])
@@ -86,12 +87,15 @@ const Checkout = () => {
     ? buyNowData.price * quantity
     : cartItems.reduce((sum, item) => sum + parseFloat(item.product_price) * item.quantity, 0)
 
-  const deliveryFee    = selectedZone ? parseFloat(selectedZone.delivery_fee) : 0
-  const pointsDiscount = usePoints && loyalty ? Math.min(pointsToUse * 0.1, subtotal) : 0
-  const downpayment    = orderType === 'bulk' ? (subtotal + deliveryFee - pointsDiscount) * 0.5 : 0
-  const total          = subtotal + deliveryFee - pointsDiscount
-  const belowMinOrder  = subtotal < GLOBAL_MIN_ORDER
-  const amountToMin    = GLOBAL_MIN_ORDER - subtotal
+  const deliveryFee     = selectedZone ? parseFloat(selectedZone.delivery_fee) : 0
+  const pointsDiscount  = usePoints && loyalty ? Math.min(pointsToUse * 0.1, subtotal) : 0
+  const total           = subtotal + deliveryFee - pointsDiscount
+  const belowMinOrder   = subtotal < GLOBAL_MIN_ORDER
+  const amountToMin     = GLOBAL_MIN_ORDER - subtotal
+
+  const downpaymentRate  = DOWNPAYMENT_RATES[orderType] || 0
+  const downpayment      = downpaymentRate > 0 ? total * downpaymentRate : 0
+  const remainingBalance = downpaymentRate > 0 ? total - downpayment : 0
 
   const validate = () => {
     const e = {}
@@ -219,15 +223,15 @@ const Checkout = () => {
                   <span className='text-green-600 text-xs font-bold'>-₱{pointsDiscount.toFixed(2)}</span>
                 </div>
               )}
-              {orderType === 'bulk' && (
+              {downpaymentRate > 0 && (
                 <>
                   <div className='flex justify-between items-center'>
-                    <span className='text-amber-600 text-xs font-semibold'>Downpayment (50%)</span>
+                    <span className='text-amber-600 text-xs font-semibold'>Downpayment ({(downpaymentRate * 100).toFixed(0)}%)</span>
                     <span className='text-amber-600 text-sm font-bold'>₱{downpayment.toFixed(2)}</span>
                   </div>
                   <div className='flex justify-between items-center'>
                     <span className='text-gray-400 text-xs'>Remaining Balance</span>
-                    <span className='text-[#2C1503] text-xs font-semibold'>₱{downpayment.toFixed(2)}</span>
+                    <span className='text-[#2C1503] text-xs font-semibold'>₱{remainingBalance.toFixed(2)}</span>
                   </div>
                 </>
               )}
@@ -235,9 +239,11 @@ const Checkout = () => {
                 <span className='text-gray-500 text-sm font-semibold'>Total</span>
                 <span className='text-[#2C1503] text-xl font-bold'>₱{total.toFixed(2)}</span>
               </div>
-              {orderType === 'bulk' && (
+              {downpaymentRate > 0 && (
                 <div className='bg-amber-50 border border-amber-200 rounded-xl px-3 py-2'>
-                  <p className='text-amber-700 text-xs font-semibold'>⚠️ Please pay the 50% downpayment to confirm your bulk order.</p>
+                  <p className='text-amber-700 text-xs font-semibold'>
+                    ⚠️ Please pay the {(downpaymentRate * 100).toFixed(0)}% downpayment (₱{downpayment.toFixed(2)}) to confirm your order.
+                  </p>
                 </div>
               )}
               <div className='flex items-center gap-2 bg-green-50 rounded-xl px-3 py-2'>
@@ -328,7 +334,7 @@ const Checkout = () => {
                     <input type='radio' name='orderType' value='regular' checked={orderType === 'regular'} onChange={() => setOrderType('regular')} className='accent-[#3D1F00]' />
                     <div>
                       <p className='text-[#2C1503] text-sm font-semibold'>📦 Regular Order</p>
-                      <p className='text-gray-400 text-xs'>Standard delivery order</p>
+                      <p className='text-gray-400 text-xs'>30% downpayment required</p>
                     </div>
                   </label>
                   <label className={`flex items-center gap-3 border rounded-xl px-4 py-3 cursor-pointer transition flex-1 ${orderType === 'bulk' ? 'border-[#C4A882] bg-[#FAF6F0]' : 'border-gray-200'}`}>
@@ -372,6 +378,15 @@ const Checkout = () => {
                     </div>
                   </div>
                 )}
+
+                {orderType === 'regular' && (
+                  <div className='flex flex-col gap-2 bg-blue-50 border border-blue-200 rounded-xl p-4'>
+                    <p className='text-blue-700 text-xs font-semibold'>
+                      ℹ️ Regular orders require 30% downpayment to confirm. Remaining balance upon delivery.
+                    </p>
+                  </div>
+                )}
+
                 <button
                   onClick={() => setCurrentStep(1)}
                   className='w-full bg-[#3D1F00] text-white font-semibold text-sm py-2.5 rounded-xl mt-4 hover:bg-[#5a2f00] transition'
@@ -684,16 +699,16 @@ const Checkout = () => {
                     {!selectedZone ? '—' : deliveryFee === 0 ? 'Free' : `₱${deliveryFee.toFixed(2)}`}
                   </p>
                 </div>
-                {orderType === 'bulk' && (
+                {downpaymentRate > 0 && (
                   <>
                     <div className='h-px bg-white/10 my-1' />
                     <div className='flex justify-between'>
-                      <p className='text-amber-300 text-xs'>Downpayment (50%)</p>
+                      <p className='text-amber-300 text-xs'>Downpayment ({(downpaymentRate * 100).toFixed(0)}%)</p>
                       <p className='text-amber-300 text-xs font-bold'>₱{downpayment.toFixed(2)}</p>
                     </div>
                     <div className='flex justify-between'>
                       <p className='text-[#C4A882]/60 text-xs'>Remaining</p>
-                      <p className='text-white text-xs font-semibold'>₱{downpayment.toFixed(2)}</p>
+                      <p className='text-white text-xs font-semibold'>₱{remainingBalance.toFixed(2)}</p>
                     </div>
                   </>
                 )}
@@ -743,7 +758,7 @@ const Checkout = () => {
                   </svg>
                   Placing Order...
                 </span>
-              ) : orderType === 'bulk' ? '→ PLACE BULK ORDER' : '→ PLACE ORDER'}
+              ) : downpaymentRate > 0 ? `→ PLACE ORDER (${(downpaymentRate * 100).toFixed(0)}% DP)` : '→ PLACE ORDER'}
             </button>
             <p className='text-[#C4A882]/40 text-[10px] text-center mt-3'>We verify orders via phone number</p>
           </div>

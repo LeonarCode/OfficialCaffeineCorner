@@ -346,30 +346,26 @@ class TownZoneListView(generics.ListAPIView):
 
 class OrderCreateView(APIView):
     permission_classes = [AllowAny]
+    GLOBAL_MIN_ORDER = 1000
 
-    GLOBAL_MIN_ORDER = 1000  # ← constant sa taas ng class
+    DOWNPAYMENT_RATES = {
+        'regular': None,  # set below with Decimal import
+        'bulk':    None,
+    }
 
     def post(self, request):
+        self.DOWNPAYMENT_RATES = {
+            'regular': Decimal('0.30'),
+            'bulk':    Decimal('0.50'),
+        }
+
         serializer = CreateOrderSerializer(data=request.data)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
         data       = serializer.validated_data
         user       = request.user if request.user.is_authenticated else None
-        phone = data['phone']
         order_type = data.get('order_type', 'regular')
-
-        # ─── Anti-spam: check kung 3+ pending orders na ang same phone within 1 hour ───
-        recent_pending = Order.objects.filter(
-            phone=phone,
-            status='pending',
-            created_at__gte=timezone.now() - timedelta(hours=1),
-        ).count()
-
-        if recent_pending >= 3:
-            return Response({
-                'error': 'You have too many pending orders. Please wait for your previous orders to be confirmed, or contact us directly.'
-            }, status=status.HTTP_429_TOO_MANY_REQUESTS)
 
         if user and not data.get('items'):
             cart_items = CartItem.objects.filter(user=user).select_related('product', 'variant')
@@ -406,6 +402,7 @@ class OrderCreateView(APIView):
         order = Order.objects.create(
             user=user,
             email=data['email'],
+            phone=data['phone'],
             address=data.get('address', ''),
             notes=data.get('notes', ''),
             payment_method=data['payment_method'],
@@ -446,13 +443,14 @@ class OrderCreateView(APIView):
                 'error': f'Minimum order for {zone.name} is ₱{zone.min_order_amount}. Your order subtotal is ₱{subtotal}.'
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        if order_type == 'bulk':
-            from decimal import Decimal
-            grand_total              = subtotal + delivery_fee
-            downpayment              = round(grand_total * Decimal('0.50'), 2)
-            order.downpayment_amount = downpayment
-            order.remaining_balance  = grand_total - downpayment
-            order.payment_status     = 'unpaid'
+        # ─── Downpayment (regular = 30%, bulk = 50%) ─────────────────
+        if order_type in self.DOWNPAYMENT_RATES:
+            rate                      = self.DOWNPAYMENT_RATES[order_type]
+            grand_total               = subtotal + delivery_fee
+            downpayment               = round(grand_total * rate, 2)
+            order.downpayment_amount  = downpayment
+            order.remaining_balance   = grand_total - downpayment
+            order.payment_status      = 'unpaid'
 
         if user:
             loyalty, _          = LoyaltyPoint.objects.get_or_create(user=user)
