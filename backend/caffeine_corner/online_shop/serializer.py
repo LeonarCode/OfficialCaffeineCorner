@@ -53,6 +53,12 @@ class TownZoneSerializer(serializers.ModelSerializer):
         model = TownZone
         fields = ['id', 'name', 'delivery_fee', 'min_order_amount', 'estimated_time']
 
+
+class MarkDeliveredSerializer(serializers.Serializer):
+    delivery_proof_photo = serializers.ImageField(required=True)
+    payment_received      = serializers.BooleanField(default=False)
+    rider_notes            = serializers.CharField(required=False, allow_blank=True, default='')
+
 class OrderItemSerializer(serializers.ModelSerializer):
     product_name = serializers.CharField(source='product.name', read_only=True)
     product_image = serializers.ImageField(source='product.image', read_only=True)
@@ -94,7 +100,10 @@ class CreateOrderSerializer(serializers.Serializer):
     payment_method = serializers.ChoiceField(choices=['cod', 'gcash', 'counter'])
     points_to_use  = serializers.IntegerField(required=False, default=0)
     items          = serializers.ListField(child=serializers.DictField(), required=False, default=list)
-    order_type     = serializers.ChoiceField(choices=['regular', 'bulk', 'dine_in'], default='regular')
+    order_type = serializers.ChoiceField(
+        choices=['regular', 'bulk', 'dine_in', 'pickup'],  # ← dagdag pickup
+        default='regular'
+    )
     event_date     = serializers.DateField(required=False, allow_null=True)
     pax            = serializers.IntegerField(required=False, default=0)
     table_number   = serializers.CharField(required=False, allow_blank=True, default='')
@@ -125,6 +134,28 @@ class CartItemSerializer(serializers.ModelSerializer):
         fields = ['id', 'product', 'product_name', 'product_image', 'product_price', 'variant', 'variant_size', 'quantity', 'subtotal']
         read_only_fields = ['subtotal']
 
+
+class RiderOrderSerializer(serializers.ModelSerializer):
+    items       = OrderItemSerializer(many=True, read_only=True)
+    total_price = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    zone_name   = serializers.CharField(source='zone.name', read_only=True, default=None)
+
+    class Meta:
+        model  = Order
+        fields = [
+            'id', 'email', 'phone', 'address', 'notes',
+            'status', 'payment_method', 'payment_status',
+            'order_type', 'zone_name', 'delivery_fee',
+            'items', 'total_price',
+            'delivery_proof_photo', 'delivered_at', 'rider_notes',
+            'created_at',
+        ]
+
+
+class MarkDeliveredSerializer(serializers.Serializer):
+    delivery_proof_photo = serializers.ImageField(required=True)
+    payment_received      = serializers.BooleanField(default=False)
+    rider_notes            = serializers.CharField(required=False, allow_blank=True, default='')
 
 class LoyaltyPointSerializer(serializers.ModelSerializer):
     discount_value = serializers.IntegerField(read_only=True)

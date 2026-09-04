@@ -6,6 +6,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.decorators import api_view, permission_classes
+from rest_framework.parsers import MultiPartParser, FormParser
 from django.views.decorators.csrf import csrf_exempt
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, render
@@ -13,7 +14,7 @@ from .models import Category, Product, Order, OrderItem, CartItem, LoyaltyPoint,
 from .serializer import (
     CategorySerializer, ProductSerializer, RatingSerializer,
     OrderSerializer, CreateOrderSerializer,
-    CartItemSerializer, LoyaltyPointSerializer, TownZoneSerializer
+    CartItemSerializer, LoyaltyPointSerializer, TownZoneSerializer, RiderOrderSerializer, MarkDeliveredSerializer
 )
 import os
 import hmac
@@ -344,21 +345,22 @@ class TownZoneListView(generics.ListAPIView):
     serializer_class = TownZoneSerializer
     queryset = TownZone.objects.filter(is_active=True)
 
+from decimal import Decimal
+
 class OrderCreateView(APIView):
     permission_classes = [AllowAny]
-    GLOBAL_MIN_ORDER = 1000
 
-    DOWNPAYMENT_RATES = {
-        'regular': None,  # set below with Decimal import
-        'bulk':    None,
+    ITEM_MIN = {
+        'regular': 3,
+        'bulk':    5,
     }
+    DOWNPAYMENT_RATES = {
+        'regular': Decimal('0.30'),
+        'bulk':    Decimal('0.50'),
+    }
+    DOWNPAYMENT_THRESHOLD = Decimal('1000')
 
     def post(self, request):
-        self.DOWNPAYMENT_RATES = {
-            'regular': Decimal('0.30'),
-            'bulk':    Decimal('0.50'),
-        }
-
         serializer = CreateOrderSerializer(data=request.data)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -376,7 +378,18 @@ class OrderCreateView(APIView):
                 for item in cart_items
             ]
 
-        # ─── Zone Validation (regular + bulk — may delivery) ─────
+        if not data['items']:
+            return Response({'error': 'Your order has no items.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # ─── Minimum item count (regular = 3, bulk = 5) ─────────────
+        total_qty = sum(item.get('quantity', 1) for item in data['items'])
+        min_items = self.ITEM_MIN.get(order_type)
+        if min_items and total_qty < min_items:
+            return Response({
+                'error': f'A minimum of {min_items} items is required for {order_type} orders. You currently have {total_qty}.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # ─── Zone Validation (regular + bulk lang — may delivery) ───
         zone         = None
         delivery_fee = 0
         if order_type in ['regular', 'bulk']:
@@ -388,6 +401,7 @@ class OrderCreateView(APIView):
             except TownZone.DoesNotExist:
                 return Response({'error': 'Selected zone is not available for delivery.'}, status=status.HTTP_400_BAD_REQUEST)
             delivery_fee = zone.delivery_fee
+        # pickup & dine_in — walang zone, walang delivery fee
 
         discount    = 0
         points_used = 0
@@ -429,24 +443,17 @@ class OrderCreateView(APIView):
             OrderItem.objects.create(order=order, product=product, variant=variant, quantity=quantity, price=price)
             subtotal += price * quantity
 
-        # ─── Global Minimum Order (regular + bulk lang) ─────────────
-        if order_type in ['regular', 'bulk'] and subtotal < self.GLOBAL_MIN_ORDER:
-            order.delete()
-            return Response({
-                'error': f'Minimum order amount is ₱{self.GLOBAL_MIN_ORDER:.2f}. Your order subtotal is ₱{subtotal:.2f}.'
-            }, status=status.HTTP_400_BAD_REQUEST)
-
-        # ─── Minimum order check para sa zone ─────────────────────
+        # ─── Minimum order check per zone (hindi na global ₱1000) ────
         if zone and zone.min_order_amount > 0 and subtotal < zone.min_order_amount:
             order.delete()
             return Response({
                 'error': f'Minimum order for {zone.name} is ₱{zone.min_order_amount}. Your order subtotal is ₱{subtotal}.'
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        # ─── Downpayment (regular = 30%, bulk = 50%) ─────────────────
-        if order_type in self.DOWNPAYMENT_RATES:
+        # ─── Downpayment — regular/bulk lang, kapag umabot ng ₱1000 ──
+        grand_total = subtotal + delivery_fee
+        if order_type in self.DOWNPAYMENT_RATES and grand_total >= self.DOWNPAYMENT_THRESHOLD:
             rate                      = self.DOWNPAYMENT_RATES[order_type]
-            grand_total               = subtotal + delivery_fee
             downpayment               = round(grand_total * rate, 2)
             order.downpayment_amount  = downpayment
             order.remaining_balance   = grand_total - downpayment
@@ -459,7 +466,7 @@ class OrderCreateView(APIView):
 
         order.save()
 
-        if user and order_type == 'regular':
+        if user and order_type in ['regular', 'pickup']:
             CartItem.objects.filter(user=user).delete()
 
         return Response(OrderSerializer(order).data, status=status.HTTP_201_CREATED)
@@ -471,6 +478,103 @@ class OrderDetailView(generics.RetrieveAPIView):
     def get_queryset(self):
         return Order.objects.prefetch_related('items__product', 'items__variant')
 
+
+class RiderLoginCheckMixin:
+    """Helper para i-verify na rider ang naka-login"""
+    def check_rider(self, request):
+        if not request.user.is_authenticated or not request.user.is_rider:
+            return Response({'error': 'Access denied. Rider account required.'}, status=status.HTTP_403_FORBIDDEN)
+        return None
+
+
+class RiderOrderListView(generics.ListAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class    = RiderOrderSerializer
+
+    def get_queryset(self):
+        if not self.request.user.is_rider:
+            return Order.objects.none()
+        return Order.objects.filter(
+            assigned_rider=self.request.user,
+        ).exclude(status='delivered').prefetch_related('items__product').order_by('created_at')
+
+
+class RiderOrderHistoryView(generics.ListAPIView):
+    permission_classes = [IsAuthenticated]
+    serializer_class    = RiderOrderSerializer
+
+    def get_queryset(self):
+        if not self.request.user.is_rider:
+            return Order.objects.none()
+        return Order.objects.filter(
+            assigned_rider=self.request.user,
+            status='delivered',
+        ).prefetch_related('items__product').order_by('-delivered_at')[:50]
+
+
+class RiderMarkDeliveredView(APIView):
+    permission_classes = [IsAuthenticated]
+    parser_classes      = [MultiPartParser, FormParser]
+
+    def post(self, request, order_id):
+        if not request.user.is_rider:
+            return Response({'error': 'Access denied.'}, status=status.HTTP_403_FORBIDDEN)
+
+        order = get_object_or_404(Order, id=order_id, assigned_rider=request.user)
+
+        serializer = MarkDeliveredSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        data = serializer.validated_data
+
+        order.status                 = 'delivered'
+        order.delivery_proof_photo   = data['delivery_proof_photo']
+        order.delivered_at           = timezone.now()
+        order.rider_notes            = data.get('rider_notes', '')
+
+        if data.get('payment_received'):
+            order.payment_status = 'paid'
+
+        order.save()
+
+        # Log activity
+        from .utils import log_activity
+        log_activity(
+            action='order_updated',
+            user=request.user,
+            model_name='Order',
+            object_id=order.id,
+            details=f'Order #CC-{str(order.id).zfill(5)} marked as delivered by rider {request.user.email}. Payment received: {data.get("payment_received")}.',
+        )
+
+        return Response(RiderOrderSerializer(order, context={'request': request}).data)
+
+
+class RiderStatsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not request.user.is_rider:
+            return Response({'error': 'Access denied.'}, status=status.HTTP_403_FORBIDDEN)
+
+        from django.utils import timezone
+        today = timezone.now().date()
+
+        pending_count   = Order.objects.filter(assigned_rider=request.user).exclude(status='delivered').count()
+        delivered_today = Order.objects.filter(
+            assigned_rider=request.user,
+            status='delivered',
+            delivered_at__date=today,
+        ).count()
+        delivered_total = Order.objects.filter(assigned_rider=request.user, status='delivered').count()
+
+        return Response({
+            'rider_name':       request.user.username or request.user.email,
+            'pending_count':    pending_count,
+            'delivered_today':  delivered_today,
+            'delivered_total':  delivered_total,
+        })
 
 # ─── Loyalty Points ───────────────────────────────────────
 class LoyaltyPointView(generics.RetrieveAPIView):

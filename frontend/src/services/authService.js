@@ -20,3 +20,9 @@ export const getProfile = () =>
 
 export const updateProfile = (data) =>
     api.put('/api/auth/profile/', data)
+
+export const riderRegister = (data) =>
+    api.post('/api/auth/rider-register/', data)
+
+export const riderLogin = (email, password) =>
+    api.post('/api/auth/rider-login/', { email, password })

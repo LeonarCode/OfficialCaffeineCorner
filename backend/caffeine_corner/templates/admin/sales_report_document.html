@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sales Report — Caffeine Corner Admin</title>
+  {% load humanize %}
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: Georgia, 'Times New Roman', serif;
+      background: #e9e9e9;
+      color: #1a1a1a;
+      padding: 24px 0 60px;
+    }
+
+    /* ─── Toolbar (screen only) ─────────────────────────────────────────── */
+    .toolbar {
+      max-width: 800px;
+      margin: 0 auto 20px;
+      padding: 14px 18px;
+      background: #fff;
+      border-radius: 8px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+      display: flex;
+      align-items: flex-end;
+      gap: 12px;
+      flex-wrap: wrap;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    }
+    .toolbar form { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
+    .toolbar label { display: block; font-size: 11px; font-weight: 600; color: #6b7280; text-transform: uppercase; margin-bottom: 4px; }
+    .toolbar input[type="date"] {
+      border: 1px solid #d1d5db; border-radius: 6px; padding: 7px 10px; font-size: 13px; font-family: inherit;
+    }
+    .toolbar button, .toolbar a.btn {
+      border: none; border-radius: 6px; padding: 8px 16px; font-size: 13px; font-weight: 600;
+      cursor: pointer; text-decoration: none; display: inline-block;
+    }
+    .btn-apply  { background: #f3f4f6; color: #374151; }
+    .btn-print  { background: #2C1503; color: #fff; margin-left: auto; }
+    .btn-back   { background: transparent; color: #6b7280; }
+
+    /* ─── Document ───────────────────────────────────────────────────────── */
+    .page {
+      max-width: 800px;
+      margin: 0 auto 20px;
+      background: #fff;
+      padding: 48px 56px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+    }
+
+    .doc-header { text-align: center; margin-bottom: 24px; }
+    .doc-header .shop-name { font-size: 24px; font-weight: 700; letter-spacing: 0.5px; }
+    .doc-header .shop-meta { font-size: 12px; color: #555; margin-top: 4px; }
+    .doc-header .report-title { font-size: 17px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; margin-top: 18px; }
+    .doc-header .report-caption { font-size: 11px; font-style: italic; color: #666; margin-top: 3px; }
+
+    hr.rule       { border: none; border-top: 2px solid #1a1a1a; margin: 18px 0; }
+    hr.rule-thin  { border: none; border-top: 1px solid #ccc; margin: 22px 0 14px; }
+
+    .meta-grid {
+      display: flex; justify-content: space-between; gap: 24px;
+      font-size: 12.5px; margin-bottom: 4px;
+    }
+    .meta-grid div p { line-height: 1.7; }
+    .meta-grid b { font-weight: 700; }
+
+    h2.section-title {
+      font-size: 14px; font-weight: 700; margin: 0 0 10px;
+    }
+
+    .kv-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 4px; }
+    .kv-table tr td { padding: 6px 0; border-bottom: 1px solid #eee; }
+    .kv-table tr:last-child td { border-bottom: none; }
+    .kv-table td.val { text-align: right; font-weight: 700; }
+    .kv-table tr.total td { border-top: 1.5px solid #1a1a1a; font-weight: 700; padding-top: 8px; }
+
+    table.doc-table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+    table.doc-table thead { display: table-header-group; }
+    table.doc-table th {
+      text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: 0.3px;
+      color: #444; border-bottom: 1.5px solid #1a1a1a; padding: 6px 6px;
+    }
+    table.doc-table th.num, table.doc-table td.num { text-align: right; }
+    table.doc-table td { padding: 6px 6px; border-bottom: 1px solid #eee; }
+    table.doc-table tr { page-break-inside: avoid; }
+    table.doc-table tfoot td {
+      border-top: 1.5px solid #1a1a1a; border-bottom: none;
+      font-weight: 700; padding-top: 8px;
+    }
+    table.doc-table td.empty { text-align: center; color: #888; font-style: italic; padding: 16px 0; }
+
+    .doc-footer { text-align: center; font-size: 10.5px; color: #999; margin-top: 28px; }
+
+    section + section { margin-top: 26px; }
+
+    @media print {
+      body { background: #fff; padding: 0; }
+      .toolbar { display: none; }
+      .page { box-shadow: none; padding: 0; max-width: 100%; margin: 0; }
+      section { page-break-inside: avoid; }
+      table.doc-table { page-break-inside: auto; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Toolbar -->
+  <div class="toolbar">
+    <form method="get">
+      <div>
+        <label for="date_from">From</label>
+        <input type="date" id="date_from" name="date_from" value="{{ date_from|date:'Y-m-d' }}">
+      </div>
+      <div>
+        <label for="date_to">To</label>
+        <input type="date" id="date_to" name="date_to" value="{{ date_to|date:'Y-m-d' }}">
+      </div>
+      <button type="submit" class="btn-apply">Apply</button>
+    </form>
+    <a href="{% url 'sales-report' %}" class="btn-back">← Back to Dashboard</a>
+    <button type="button" class="btn-print" onclick="window.print()">🖨️ Export as PDF</button>
+  </div>
+
+  <div class="page">
+
+    <!-- Header -->
+    <div class="doc-header">
+      <div class="shop-name">☕ CAFFEINE CORNER</div>
+      <div class="shop-meta">Garcia Hernandez, Bohol, Philippines · caffeinecorner@gmail.com</div>
+      <div class="report-title">Sales Report</div>
+      <div class="report-caption">For internal management use only — not an Official Receipt</div>
+    </div>
+
+    <hr class="rule">
+
+    <!-- Meta -->
+    <div class="meta-grid">
+      <div>
+        <p><b>Period Covered:</b> {{ date_from|date:"M j, Y" }} – {{ date_to|date:"M j, Y" }}</p>
+        <p><b>Prepared by:</b> {{ prepared_by }}</p>
+      </div>
+      <div style="text-align:right;">
+        <p><b>Date Generated:</b> {{ generated_at|date:"M j, Y, g:i A" }}</p>
+        <p><b>Reference No:</b> {{ reference_no }}</p>
+      </div>
+    </div>
+
+    <hr class="rule-thin">
+
+    <!-- Summary -->
+    <section>
+      <h2 class="section-title">Summary</h2>
+      <table class="kv-table">
+        <tr><td>Total Revenue</td><td class="val">₱{{ summary.total_revenue|floatformat:2|intcomma }}</td></tr>
+        <tr><td>Total Orders</td><td class="val">{{ summary.total_orders }}</td></tr>
+        <tr><td>Delivered</td><td class="val">{{ summary.delivered_count }} ({{ summary.delivered_pct }}%)</td></tr>
+        <tr><td>Cancelled</td><td class="val">{{ summary.cancelled_count }}</td></tr>
+        <tr><td>Average Order Value</td><td class="val">₱{{ summary.avg_order_value|floatformat:2|intcomma }}</td></tr>
+      </table>
+    </section>
+
+    <!-- Items Sold -->
+    <section>
+      <h2 class="section-title">Items Sold — Detailed Transaction Log</h2>
+      <table class="doc-table">
+        <thead>
+          <tr>
+            <th>#</th><th>Date</th><th>Order #</th><th>Item</th><th>Size</th>
+            <th class="num">Qty</th><th class="num">Unit Price</th><th class="num">Subtotal</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in transaction_log %}
+          <tr>
+            <td>{{ forloop.counter }}</td>
+            <td>{{ row.date|date:"M j, Y g:iA" }}</td>
+            <td>#{{ row.order_id|stringformat:"05d" }}</td>
+            <td>{{ row.name }}</td>
+            <td>{{ row.size }}</td>
+            <td class="num">{{ row.qty }}</td>
+            <td class="num">₱{{ row.price|floatformat:2|intcomma }}</td>
+            <td class="num">₱{{ row.subtotal|floatformat:2|intcomma }}</td>
+          </tr>
+          {% empty %}
+          <tr><td class="empty" colspan="8">No items sold in this period.</td></tr>
+          {% endfor %}
+        </tbody>
+        {% if transaction_log %}
+        <tfoot>
+          <tr><td colspan="7">TOTAL</td><td class="num">₱{{ summary.total_revenue|floatformat:2|intcomma }}</td></tr>
+        </tfoot>
+        {% endif %}
+      </table>
+    </section>
+
+    <!-- Delivery Fee Summary -->
+    <section>
+      <h2 class="section-title">Delivery Fee Summary</h2>
+      <table class="doc-table">
+        <thead>
+          <tr>
+            <th>Order #</th><th>Date</th><th>Zone</th><th>Address</th><th class="num">Delivery Fee</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for order in delivery_orders %}
+          <tr>
+            <td>#{{ order.id|stringformat:"05d" }}</td>
+            <td>{{ order.created_at|date:"M j, Y g:iA" }}</td>
+            <td>{{ order.zone.name|default:"—" }}</td>
+            <td>{{ order.address }}</td>
+            <td class="num">₱{{ order.delivery_fee|floatformat:2|intcomma }}</td>
+          </tr>
+          {% empty %}
+          <tr><td class="empty" colspan="5">No delivery orders in this period.</td></tr>
+          {% endfor %}
+        </tbody>
+        {% if delivery_orders %}
+        <tfoot>
+          <tr><td colspan="4">TOTAL DELIVERY FEES COLLECTED</td><td class="num">₱{{ total_delivery_fees|floatformat:2|intcomma }}</td></tr>
+        </tfoot>
+        {% endif %}
+      </table>
+    </section>
+
+    <!-- Payment & Order Type Breakdown -->
+    <section>
+      <h2 class="section-title">Payment &amp; Order Type Breakdown</h2>
+      <table class="kv-table">
+        <tr><td>GCash Orders</td><td class="val">{{ gcash_orders }}</td></tr>
+        <tr><td>Cash Orders</td><td class="val">{{ cash_orders }}</td></tr>
+        <tr><td>Delivery Orders</td><td class="val">{{ delivery_count }}</td></tr>
+        <tr><td>Pickup Orders</td><td class="val">{{ pickup_count }}</td></tr>
+      </table>
+    </section>
+
+    <!-- Downpayment Collection Summary -->
+    <section>
+      <h2 class="section-title">Downpayment Collection Summary</h2>
+      <table class="kv-table">
+        <tr><td>Orders with Downpayment</td><td class="val">{{ orders_with_downpayment }}</td></tr>
+        <tr><td>Downpayment Collected (GCash, in advance)</td><td class="val">₱{{ downpayment_total|floatformat:2|intcomma }}</td></tr>
+        <tr><td>Remaining Balance (Collected on Delivery/Pickup)</td><td class="val">₱{{ remaining_total|floatformat:2|intcomma }}</td></tr>
+        <tr><td>Full-Payment Orders (No Downpayment)</td><td class="val">{{ full_payment_count }}</td></tr>
+        <tr class="total"><td>Full-Payment Total</td><td class="val">₱{{ full_payment_total|floatformat:2|intcomma }}</td></tr>
+      </table>
+    </section>
+
+    <div class="doc-footer">
+      Generated by Caffeine Corner Admin · {{ generated_at|date:"M j, Y, g:i A" }}
+    </div>
+
+  </div>
+
+</body>
+</html>

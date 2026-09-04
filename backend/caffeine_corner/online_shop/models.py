@@ -151,11 +151,11 @@ class Order(models.Model):
         ('regular', 'Regular'),
         ('bulk',    'Bulk / Catering'),
         ('dine_in', 'Dine-in'),
+        ('pickup',  'Pick-up'),
     ]
     STATUS_CHOICES = [
         ('pending',    'Pending'),
         ('confirmed',  'Confirmed'),
-        ('processing', 'Processing'),
         ('delivered',  'Delivered'),
         ('cancelled',  'Cancelled'),
     ]
@@ -204,6 +204,16 @@ class Order(models.Model):
     payment_status = models.CharField(max_length=15, choices=PAYMENT_STATUS_CHOICES, default='unpaid')
     gcash_ref      = models.CharField(max_length=100, blank=True, default='')
     paymongo_id    = models.CharField(max_length=100, blank=True, default='')
+    assigned_rider = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='deliveries',
+        limit_choices_to={'is_rider': True},
+    )
+    delivery_proof_photo = models.ImageField(upload_to='delivery_proofs/', null=True, blank=True)
+    delivered_at          = models.DateTimeField(null=True, blank=True)
+    rider_notes           = models.TextField(blank=True, default='')
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

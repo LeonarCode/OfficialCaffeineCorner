@@ -23,7 +23,18 @@ class UserManager(BaseUserManager):
 class User(AbstractUser):
     email = models.EmailField(unique=True)
     username = models.CharField(max_length=150, blank=True)
-
+    is_rider = models.BooleanField(default=False, help_text="Check kung delivery rider ang account na ito")
+    phone        = models.CharField(max_length=15, blank=True, default='')
+    rider_status = models.CharField(
+        max_length=20,
+        choices=[
+            ('pending',  'Pending Approval'),
+            ('approved', 'Approved'),
+            ('rejected', 'Rejected'),
+        ],
+        default='pending',
+        blank=True,
+    )
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = []  # wala nang username required
 

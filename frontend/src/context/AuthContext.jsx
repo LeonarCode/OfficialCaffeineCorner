@@ -8,14 +8,20 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true)
   const [cartCount, setCartCount] = useState(0)
 
+  const isRiderRoute = () => window.location.pathname.startsWith('/rider')
+
   useEffect(() => {
+    if (isRiderRoute()) {
+      setLoading(false)
+      return  // ← huwag mag-check ng customer auth sa rider routes
+    }
     const token = localStorage.getItem('access')
     setIsAuthenticated(!!token)
     setLoading(false)
   }, [])
 
-  // Fetch cart count when authenticated
   useEffect(() => {
+    if (isRiderRoute()) return  // ← huwag mag-fetch ng cart sa rider routes
     if (isAuthenticated) {
       fetchCartCount()
     } else {
@@ -24,6 +30,7 @@ export const AuthProvider = ({ children }) => {
   }, [isAuthenticated])
 
   const fetchCartCount = async () => {
+    if (isRiderRoute()) return  // ← safety net
     try {
       const res = await getCart()
       const total = res.data.reduce((sum, item) => sum + item.quantity, 0)

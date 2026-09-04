@@ -4,7 +4,7 @@ from django.utils.translation import gettext_lazy as _
 from unfold.admin import ModelAdmin, TabularInline
 from .models import (
     InventoryCategory, Supplier, Inventory,
-    StockMovement, PurchaseOrder, PurchaseOrderItem, Ingredient
+    StockMovement, PurchaseOrder, PurchaseOrderItem
 )
 
 
@@ -219,12 +219,5 @@ class PurchaseOrderAdmin(ModelAdmin):
         extra_context['auto_generate_url'] = '/admin/auto-generate-po/'
         return super().changelist_view(request, extra_context=extra_context)
 
-
-# ─── Ingredient ───────────────────────────────────────────────────────────────
-
-@admin.register(Ingredient)
-class IngredientAdmin(ModelAdmin):
-    list_display  = ['product', 'inventory', 'quantity', 'unit']
-    search_fields = ['product__name', 'inventory__name']
 
 

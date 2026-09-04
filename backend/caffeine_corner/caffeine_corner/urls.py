@@ -19,11 +19,12 @@ from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
 from rest_framework_simplejwt.views import TokenRefreshView
-from inventory.views import SalesReportView, mark_notification_read, sales_report_view, export_orders, auto_generate_purchase_orders
+from inventory.views import SalesReportView, mark_notification_read, sales_report_view, sales_report_document_view, export_orders, auto_generate_purchase_orders
 from online_shop.views import dine_in_landing, generate_table_qr, print_order_receipt, table_qr_page
 
 urlpatterns = [
     path('admin/sales-report/', sales_report_view, name='sales-report'),
+    path('admin/sales-report/document/', sales_report_document_view, name='sales-report-document'),
     path('admin/mark-notification-read/<int:notification_id>/', mark_notification_read, name='mark-notification-read'),
     path('admin/auto-generate-po/', auto_generate_purchase_orders, name='auto-generate-po'),
     path('admin/orders/<int:order_id>/receipt/', print_order_receipt, name='print-receipt'),

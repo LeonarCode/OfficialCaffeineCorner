@@ -4,8 +4,8 @@ from rest_framework import status
 from rest_framework.permissions import AllowAny
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import get_user_model
-from .models import OTPCode
-from .serializer import SendOTPSerializer, VerifyOTPSerializer
+from .models import OTPCode, User
+from .serializer import SendOTPSerializer, VerifyOTPSerializer, SocialAuthSerializer, RiderRegisterSerializer, RiderLoginSerializer
 from .utils import generate_otp, send_otp_email
 from allauth.socialaccount.providers.google.views import GoogleOAuth2Adapter
 from allauth.socialaccount.providers.facebook.views import FacebookOAuth2Adapter
@@ -110,3 +110,50 @@ class FacebookLoginView(SocialLoginView):
     adapter_class = FacebookOAuth2Adapter
     callback_url = 'http://localhost:5173'
     client_class = OAuth2Client
+
+class RiderRegisterView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = RiderRegisterSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        data = serializer.validated_data
+
+        user = User.objects.create_user(
+            email=data['email'],
+            username=data['username'],
+            password=data['password'],
+        )
+        user.phone        = data['phone']
+        user.is_rider     = True
+        user.is_active    = False  # ← naka-pending, hindi pa makakalogin
+        user.rider_status = 'pending'
+        user.save()
+
+        return Response({
+            'message': 'Registration successful! Please wait for admin approval before you can log in.',
+        }, status=status.HTTP_201_CREATED)
+
+class RiderLoginView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = RiderLoginSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        user = serializer.validated_data['user']
+
+        if user.rider_status == 'pending':
+            return Response({'error': 'Your account is still pending admin approval.'}, status=status.HTTP_403_FORBIDDEN)
+        if user.rider_status == 'rejected':
+            return Response({'error': 'Your rider application was not approved. Contact management.'}, status=status.HTTP_403_FORBIDDEN)
+
+        refresh = RefreshToken.for_user(user)
+        return Response({
+            'access':     str(refresh.access_token),
+            'refresh':    str(refresh),
+            'rider_name': user.username or user.email,
+        })

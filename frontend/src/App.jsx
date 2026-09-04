@@ -13,6 +13,10 @@ import Orders from "./pages/Orders.jsx"
 import ProductDetail from "./pages/ProductDetail.jsx"
 import Profile from "./pages/Profile.jsx"
 import DineInMenu from "./pages/DineInMenu.jsx"
+import RiderLogin from "./pages/rider/RiderLogin.jsx"
+import RiderRegister from "./pages/rider/RiderRegister.jsx"
+import RiderDashboard from "./pages/rider/RiderDashboard.jsx"
+import RiderOrderDetail from "./pages/rider/RiderOrderDetail.jsx"
 
 
 const App = () => {
@@ -33,6 +37,10 @@ const App = () => {
           <Route path="/profile" element={<Profile />} />
           <Route path="/menu" element={<DineInMenu />} />
         </Route>
+        <Route path="/rider/login" element={<RiderLogin />} />
+        <Route path="/rider/register" element={<RiderRegister />} />
+        <Route path="/rider/dashboard" element={<RiderDashboard />} />
+        <Route path="/rider/order/:id" element={<RiderOrderDetail />} />
       </Routes>
     </BrowserRouter>
   )

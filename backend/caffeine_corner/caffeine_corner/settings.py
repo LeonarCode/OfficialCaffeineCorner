@@ -49,6 +49,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'django.contrib.sites',
+    'django.contrib.humanize',
 
     # Auth
     'allauth',
@@ -347,11 +348,6 @@ UNFOLD = {
                         "icon": "folder",
                         "link": reverse_lazy("admin:inventory_inventorycategory_changelist"),
                     },
-                    {
-                        "title": "Ingredients",
-                        "icon": "science",
-                        "link": reverse_lazy("admin:inventory_ingredient_changelist"),
-                    },
                 ],
             },
             {
@@ -362,11 +358,6 @@ UNFOLD = {
                         "title": "Users",
                         "icon": "person",
                         "link": reverse_lazy("admin:authentication_user_changelist"),
-                    },
-                    {
-                        "title": "Groups",
-                        "icon": "group",
-                        "link": reverse_lazy("admin:auth_group_changelist"),
                     },
                     {
                         "title": "OTP Codes",

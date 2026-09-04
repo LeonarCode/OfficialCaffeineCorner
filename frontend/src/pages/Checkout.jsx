@@ -7,8 +7,10 @@ import { getZones } from '../services/orderService.js'
 import { useAuth } from '../context/AuthContext'
 
 const STEPS = ['Order Type', 'Delivery', 'Payment']
-const GLOBAL_MIN_ORDER = 1000
+const ITEM_MIN = { regular: 3, bulk: 5 }
 const DOWNPAYMENT_RATES = { regular: 0.30, bulk: 0.50 }
+const DOWNPAYMENT_THRESHOLD = 1000
+const NEEDS_DELIVERY = ['regular', 'bulk']
 
 const Checkout = () => {
   const [cartItems,      setCartItems]      = useState([])
@@ -68,6 +70,16 @@ const Checkout = () => {
     init()
   }, [])
 
+  const needsDelivery = NEEDS_DELIVERY.includes(orderType)
+
+  // Clear zone/address requirements when switching to pickup
+  useEffect(() => {
+    if (!needsDelivery) {
+      setSelectedZone(null)
+      setErrors(p => ({ ...p, zone: '', address: '' }))
+    }
+  }, [orderType])
+
   const validatePhone = (phone) => {
     const cleaned = phone.replace(/[\s\-]/g, '')
     const pattern = /^(09\d{9}|\+639\d{9})$/
@@ -87,13 +99,19 @@ const Checkout = () => {
     ? buyNowData.price * quantity
     : cartItems.reduce((sum, item) => sum + parseFloat(item.product_price) * item.quantity, 0)
 
-  const deliveryFee     = selectedZone ? parseFloat(selectedZone.delivery_fee) : 0
-  const pointsDiscount  = usePoints && loyalty ? Math.min(pointsToUse * 0.1, subtotal) : 0
-  const total           = subtotal + deliveryFee - pointsDiscount
-  const belowMinOrder   = subtotal < GLOBAL_MIN_ORDER
-  const amountToMin     = GLOBAL_MIN_ORDER - subtotal
+  const totalItems = buyNowData?.product
+    ? quantity
+    : cartItems.reduce((sum, item) => sum + item.quantity, 0)
 
-  const downpaymentRate  = DOWNPAYMENT_RATES[orderType] || 0
+  const minItems      = ITEM_MIN[orderType] || 0
+  const belowMinItems = minItems > 0 && totalItems < minItems
+
+  const deliveryFee    = needsDelivery && selectedZone ? parseFloat(selectedZone.delivery_fee) : 0
+  const pointsDiscount = usePoints && loyalty ? Math.min(pointsToUse * 0.1, subtotal) : 0
+  const total          = subtotal + deliveryFee - pointsDiscount
+
+  const downpaymentRate  = (DOWNPAYMENT_RATES[orderType] && total >= DOWNPAYMENT_THRESHOLD)
+    ? DOWNPAYMENT_RATES[orderType] : 0
   const downpayment      = downpaymentRate > 0 ? total * downpaymentRate : 0
   const remainingBalance = downpaymentRate > 0 ? total - downpayment : 0
 
@@ -105,13 +123,13 @@ const Checkout = () => {
     } else if (!validatePhone(form.phone)) {
       e.phone = 'Enter a valid Philippine mobile number (e.g. 09171234567)'
     }
-    if (!form.address) e.address = 'Delivery address is required'
+    if (needsDelivery && !form.address) e.address = 'Delivery address is required'
     if (orderType === 'bulk' && !eventDate) e.eventDate = 'Event date is required'
-    if (!selectedZone) e.zone = 'Please select your delivery zone'
+    if (needsDelivery && !selectedZone) e.zone = 'Please select your delivery zone'
 
-    if (belowMinOrder) {
-      e.minOrder = `Minimum order amount is ₱${GLOBAL_MIN_ORDER.toFixed(2)}. Add ₱${amountToMin.toFixed(2)} more.`
-    } else if (selectedZone && subtotal < selectedZone.min_order_amount) {
+    if (belowMinItems) {
+      e.minItems = `A minimum of ${minItems} items is required for ${orderType} orders. You currently have ${totalItems}.`
+    } else if (needsDelivery && selectedZone && subtotal < selectedZone.min_order_amount) {
       e.zone = `Minimum order for ${selectedZone.name} is ₱${parseFloat(selectedZone.min_order_amount).toFixed(2)}`
     }
 
@@ -126,14 +144,14 @@ const Checkout = () => {
       const data = {
         email:          form.email,
         phone:          form.phone.replace(/[\s\-]/g, ''),
-        address:        form.address,
+        address:        needsDelivery ? form.address : '',
         notes:          form.notes,
         payment_method: paymentMethod,
         order_type:     orderType,
         event_date:     orderType === 'bulk' ? eventDate : null,
         pax:            orderType === 'bulk' ? parseInt(pax) || 0 : 0,
         points_to_use:  usePoints ? pointsToUse : 0,
-        zone_id:        selectedZone?.id || null,
+        zone_id:        needsDelivery ? (selectedZone?.id || null) : null,
         items: buyNowData?.product
           ? [{ product: buyNowData.product, quantity }]
           : cartItems.map(item => ({
@@ -153,10 +171,17 @@ const Checkout = () => {
     }
   }
 
-  const isFormValid = form.email && form.phone && validatePhone(form.phone) && form.address && selectedZone &&
+  const isFormValid = form.email && form.phone && validatePhone(form.phone) &&
+    (!needsDelivery || (form.address && selectedZone)) &&
     (orderType !== 'bulk' || eventDate) &&
-    !belowMinOrder &&
-    subtotal >= (selectedZone?.min_order_amount || 0)
+    !belowMinItems &&
+    (!needsDelivery || !selectedZone || subtotal >= (selectedZone?.min_order_amount || 0))
+
+  const ORDER_TYPE_LABELS = {
+    regular: { icon: '📦', label: 'Regular' },
+    bulk:    { icon: '🍽️', label: 'Bulk / Catering' },
+    pickup:  { icon: '🏪', label: 'Pick-up' },
+  }
 
   return (
     <div className='flex flex-col min-h-screen bg-[#FAF6F0]'>
@@ -176,7 +201,7 @@ const Checkout = () => {
                 Order <em className='text-[#C4A882] italic font-serif'>Placed!</em>
               </h2>
               <p className='text-[#C4A882]/60 text-xs tracking-widest uppercase mt-1'>
-                {orderType === 'bulk' ? 'Bulk order received →' : "We're preparing your order →"}
+                {orderType === 'bulk' ? 'Bulk order received →' : orderType === 'pickup' ? 'Ready for pick-up soon →' : "We're preparing your order →"}
               </p>
             </div>
             <div className='px-6 py-5 flex flex-col gap-3'>
@@ -186,11 +211,11 @@ const Checkout = () => {
               </div>
               <div className='flex justify-between items-center'>
                 <span className='text-gray-400 text-xs'>Type</span>
-                <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${orderType === 'bulk' ? 'bg-amber-100 text-amber-700' : 'bg-gray-100 text-gray-600'}`}>
-                  {orderType === 'bulk' ? '🍽️ Bulk / Catering' : '📦 Regular'}
+                <span className='text-xs font-semibold px-2 py-0.5 rounded-full bg-gray-100 text-gray-600'>
+                  {ORDER_TYPE_LABELS[orderType]?.icon} {ORDER_TYPE_LABELS[orderType]?.label}
                 </span>
               </div>
-              {selectedZone && (
+              {needsDelivery && selectedZone && (
                 <div className='flex justify-between items-center'>
                   <span className='text-gray-400 text-xs'>Zone</span>
                   <span className='text-[#2C1503] text-xs font-semibold'>{selectedZone.name}</span>
@@ -244,6 +269,11 @@ const Checkout = () => {
                   <p className='text-amber-700 text-xs font-semibold'>
                     ⚠️ Please pay the {(downpaymentRate * 100).toFixed(0)}% downpayment (₱{downpayment.toFixed(2)}) to confirm your order.
                   </p>
+                </div>
+              )}
+              {orderType === 'pickup' && (
+                <div className='bg-blue-50 border border-blue-200 rounded-xl px-3 py-2'>
+                  <p className='text-blue-700 text-xs font-semibold'>🏪 Please pick up your order at Caffeine Corner, Garcia Hernandez, Bohol.</p>
                 </div>
               )}
               <div className='flex items-center gap-2 bg-green-50 rounded-xl px-3 py-2'>
@@ -323,6 +353,9 @@ const Checkout = () => {
                 {orderType === 'bulk' && (
                   <span className='text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-semibold'>Bulk</span>
                 )}
+                {orderType === 'pickup' && (
+                  <span className='text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-semibold'>Pick-up</span>
+                )}
               </div>
               <span className='text-gray-400 text-sm'>{currentStep === 0 ? '↑' : '↓'}</span>
             </button>
@@ -334,26 +367,39 @@ const Checkout = () => {
                     <input type='radio' name='orderType' value='regular' checked={orderType === 'regular'} onChange={() => setOrderType('regular')} className='accent-[#3D1F00]' />
                     <div>
                       <p className='text-[#2C1503] text-sm font-semibold'>📦 Regular Order</p>
-                      <p className='text-gray-400 text-xs'>30% downpayment required</p>
+                      <p className='text-gray-400 text-xs'>Min. 3 items · Delivery</p>
                     </div>
                   </label>
                   <label className={`flex items-center gap-3 border rounded-xl px-4 py-3 cursor-pointer transition flex-1 ${orderType === 'bulk' ? 'border-[#C4A882] bg-[#FAF6F0]' : 'border-gray-200'}`}>
                     <input type='radio' name='orderType' value='bulk' checked={orderType === 'bulk'} onChange={() => setOrderType('bulk')} className='accent-[#3D1F00]' />
                     <div>
                       <p className='text-[#2C1503] text-sm font-semibold'>🍽️ Bulk / Catering</p>
-                      <p className='text-gray-400 text-xs'>50% downpayment required</p>
+                      <p className='text-gray-400 text-xs'>Min. 5 items · Delivery</p>
                     </div>
                   </label>
                 </div>
 
-                {/* Min order note — applies to both regular and bulk */}
-                <p className='text-gray-400 text-[11px] mb-3'>
-                  ℹ️ Minimum order amount is <span className='font-semibold text-[#6f4e37]'>₱{GLOBAL_MIN_ORDER.toFixed(2)}</span> for delivery orders.
-                </p>
+                {/* Pick-up option */}
+                <label className={`flex items-center gap-3 border rounded-xl px-4 py-3 cursor-pointer transition mb-3
+                  ${orderType === 'pickup' ? 'border-[#C4A882] bg-[#FAF6F0]' : 'border-gray-200'}`}>
+                  <input type='radio' name='orderType' value='pickup' checked={orderType === 'pickup'} onChange={() => setOrderType('pickup')} className='accent-[#3D1F00]' />
+                  <div>
+                    <p className='text-[#2C1503] text-sm font-semibold'>🏪 Pick-up</p>
+                    <p className='text-gray-400 text-xs'>No minimum · No delivery fee · Pick up at the shop</p>
+                  </div>
+                </label>
+
+                {/* Item minimum note */}
+                {minItems > 0 && (
+                  <p className='text-gray-400 text-[11px] mb-3'>
+                    ℹ️ Minimum <span className='font-semibold text-[#6f4e37]'>{minItems} items</span> required for {orderType} orders.
+                    {totalItems > 0 && ` You currently have ${totalItems}.`}
+                  </p>
+                )}
 
                 {orderType === 'bulk' && (
                   <div className='flex flex-col gap-3 bg-amber-50 border border-amber-200 rounded-xl p-4'>
-                    <p className='text-amber-700 text-xs font-semibold'>⚠️ Bulk orders require 50% downpayment. Remaining balance upon delivery.</p>
+                    <p className='text-amber-700 text-xs font-semibold'>⚠️ Bulk orders may require a downpayment if the total reaches ₱1,000. Remaining balance upon delivery.</p>
                     <div>
                       <label className='text-[#2C1503] text-xs font-semibold uppercase mb-1.5 block'>
                         Event Date <span className='text-red-400'>*</span>
@@ -382,7 +428,15 @@ const Checkout = () => {
                 {orderType === 'regular' && (
                   <div className='flex flex-col gap-2 bg-blue-50 border border-blue-200 rounded-xl p-4'>
                     <p className='text-blue-700 text-xs font-semibold'>
-                      ℹ️ Regular orders require 30% downpayment to confirm. Remaining balance upon delivery.
+                      ℹ️ Orders reaching ₱1,000 require a 30% downpayment to confirm. Remaining balance upon delivery.
+                    </p>
+                  </div>
+                )}
+
+                {orderType === 'pickup' && (
+                  <div className='flex flex-col gap-2 bg-green-50 border border-green-200 rounded-xl p-4'>
+                    <p className='text-green-700 text-xs font-semibold'>
+                      ✓ No delivery fee, no downpayment. Pay in full when you pick up your order.
                     </p>
                   </div>
                 )}
@@ -397,7 +451,7 @@ const Checkout = () => {
             )}
           </div>
 
-          {/* Step 2 — Delivery */}
+          {/* Step 2 — Delivery / Contact */}
           <div className='bg-white rounded-2xl overflow-hidden shadow-sm'>
             <button
               className='w-full flex items-center justify-between p-5'
@@ -406,9 +460,11 @@ const Checkout = () => {
               <div className='flex items-center gap-3'>
                 <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition
                   ${currentStep >= 1 ? 'bg-[#3D1F00] text-[#C4A882]' : 'bg-gray-100 text-gray-400'}`}>
-                  {form.email && form.phone && form.address && selectedZone ? '✓' : '2'}
+                  {form.email && form.phone && (!needsDelivery || (form.address && selectedZone)) ? '✓' : '2'}
                 </div>
-                <h2 className='text-[#2C1503] font-semibold text-sm'>Contact & Delivery</h2>
+                <h2 className='text-[#2C1503] font-semibold text-sm'>
+                  {needsDelivery ? 'Contact & Delivery' : 'Contact Info'}
+                </h2>
               </div>
               <span className='text-gray-400 text-sm'>{currentStep === 1 ? '↑' : '↓'}</span>
             </button>
@@ -416,52 +472,54 @@ const Checkout = () => {
             {currentStep === 1 && (
               <div className='px-5 pb-5 flex flex-col gap-4'>
 
-                {/* Zone Selector */}
-                <div>
-                  <label className='text-[#2C1503] text-xs font-semibold uppercase mb-1.5 block'>
-                    Delivery Zone <span className='text-red-400'>*</span>
-                  </label>
-                  {loadingZones ? (
-                    <div className='h-12 bg-gray-100 rounded-xl animate-pulse' />
-                  ) : zones.length === 0 ? (
-                    <p className='text-gray-400 text-xs bg-gray-50 rounded-xl px-4 py-3'>
-                      No delivery zones available at the moment.
-                    </p>
-                  ) : (
-                    <div className='flex flex-col gap-2'>
-                      {zones.map(zone => (
-                        <label
-                          key={zone.id}
-                          className={`flex items-center justify-between border rounded-xl px-4 py-3 cursor-pointer transition
-                            ${selectedZone?.id === zone.id ? 'border-[#C4A882] bg-[#FAF6F0]' : 'border-gray-200 hover:border-gray-300'}`}
-                        >
-                          <div className='flex items-center gap-3'>
-                            <input
-                              type='radio'
-                              name='zone'
-                              checked={selectedZone?.id === zone.id}
-                              onChange={() => { setSelectedZone(zone); setErrors(p => ({ ...p, zone: '' })) }}
-                              className='accent-[#3D1F00]'
-                            />
-                            <div>
-                              <p className='text-[#2C1503] text-sm font-semibold'>{zone.name}</p>
-                              <div className='flex items-center gap-2 text-xs text-gray-400'>
-                                {zone.estimated_time && <span>⏱ {zone.estimated_time}</span>}
-                                {zone.min_order_amount > 0 && (
-                                  <span>· Min. ₱{parseFloat(zone.min_order_amount).toFixed(0)}</span>
-                                )}
+                {/* Zone Selector — regular/bulk lang */}
+                {needsDelivery && (
+                  <div>
+                    <label className='text-[#2C1503] text-xs font-semibold uppercase mb-1.5 block'>
+                      Delivery Zone <span className='text-red-400'>*</span>
+                    </label>
+                    {loadingZones ? (
+                      <div className='h-12 bg-gray-100 rounded-xl animate-pulse' />
+                    ) : zones.length === 0 ? (
+                      <p className='text-gray-400 text-xs bg-gray-50 rounded-xl px-4 py-3'>
+                        No delivery zones available at the moment.
+                      </p>
+                    ) : (
+                      <div className='flex flex-col gap-2'>
+                        {zones.map(zone => (
+                          <label
+                            key={zone.id}
+                            className={`flex items-center justify-between border rounded-xl px-4 py-3 cursor-pointer transition
+                              ${selectedZone?.id === zone.id ? 'border-[#C4A882] bg-[#FAF6F0]' : 'border-gray-200 hover:border-gray-300'}`}
+                          >
+                            <div className='flex items-center gap-3'>
+                              <input
+                                type='radio'
+                                name='zone'
+                                checked={selectedZone?.id === zone.id}
+                                onChange={() => { setSelectedZone(zone); setErrors(p => ({ ...p, zone: '' })) }}
+                                className='accent-[#3D1F00]'
+                              />
+                              <div>
+                                <p className='text-[#2C1503] text-sm font-semibold'>{zone.name}</p>
+                                <div className='flex items-center gap-2 text-xs text-gray-400'>
+                                  {zone.estimated_time && <span>⏱ {zone.estimated_time}</span>}
+                                  {zone.min_order_amount > 0 && (
+                                    <span>· Min. ₱{parseFloat(zone.min_order_amount).toFixed(0)}</span>
+                                  )}
+                                </div>
                               </div>
                             </div>
-                          </div>
-                          <p className='text-[#6f4e37] text-sm font-bold shrink-0'>
-                            {parseFloat(zone.delivery_fee) === 0 ? 'Free' : `₱${parseFloat(zone.delivery_fee).toFixed(2)}`}
-                          </p>
-                        </label>
-                      ))}
-                    </div>
-                  )}
-                  {errors.zone && <p className='text-red-400 text-xs mt-1'>{errors.zone}</p>}
-                </div>
+                            <p className='text-[#6f4e37] text-sm font-bold shrink-0'>
+                              {parseFloat(zone.delivery_fee) === 0 ? 'Free' : `₱${parseFloat(zone.delivery_fee).toFixed(2)}`}
+                            </p>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                    {errors.zone && <p className='text-red-400 text-xs mt-1'>{errors.zone}</p>}
+                  </div>
+                )}
 
                 <div>
                   <label className='text-[#2C1503] text-xs font-semibold uppercase mb-1.5 block'>
@@ -511,20 +569,30 @@ const Checkout = () => {
                   }
                 </div>
 
-                <div>
-                  <label className='text-[#2C1503] text-xs font-semibold uppercase mb-1.5 block'>
-                    Delivery Address <span className='text-red-400'>*</span>
-                  </label>
-                  <textarea
-                    placeholder='House No., Street, Barangay'
-                    value={form.address}
-                    onChange={e => { setForm({ ...form, address: e.target.value }); setErrors(p => ({ ...p, address: '' })) }}
-                    rows={3}
-                    className={`w-full border rounded-xl px-4 py-3 text-sm text-gray-600 outline-none transition bg-[#FAF6F0] resize-none
-                      ${errors.address ? 'border-red-400' : 'border-gray-200 focus:border-[#C4A882]'}`}
-                  />
-                  {errors.address && <p className='text-red-400 text-xs mt-1'>{errors.address}</p>}
-                </div>
+                {needsDelivery ? (
+                  <div>
+                    <label className='text-[#2C1503] text-xs font-semibold uppercase mb-1.5 block'>
+                      Delivery Address <span className='text-red-400'>*</span>
+                    </label>
+                    <textarea
+                      placeholder='House No., Street, Barangay'
+                      value={form.address}
+                      onChange={e => { setForm({ ...form, address: e.target.value }); setErrors(p => ({ ...p, address: '' })) }}
+                      rows={3}
+                      className={`w-full border rounded-xl px-4 py-3 text-sm text-gray-600 outline-none transition bg-[#FAF6F0] resize-none
+                        ${errors.address ? 'border-red-400' : 'border-gray-200 focus:border-[#C4A882]'}`}
+                    />
+                    {errors.address && <p className='text-red-400 text-xs mt-1'>{errors.address}</p>}
+                  </div>
+                ) : (
+                  <div className='bg-[#FAF6F0] rounded-xl p-3 flex items-start gap-2'>
+                    <span>🏪</span>
+                    <p className='text-[#6f4e37] text-xs font-semibold'>
+                      You will pick up this order at Caffeine Corner, Garcia Hernandez, Bohol.
+                    </p>
+                  </div>
+                )}
+
                 <div>
                   <label className='text-[#2C1503] text-xs font-semibold uppercase mb-1.5 block'>
                     Order Notes <span className='text-gray-400 normal-case font-normal'>(optional)</span>
@@ -569,8 +637,12 @@ const Checkout = () => {
                   <input type='radio' name='payment' value='cod' checked={paymentMethod === 'cod'} onChange={() => setPaymentMethod('cod')} className='accent-[#3D1F00]' />
                   <span className='text-lg'>🏦</span>
                   <div>
-                    <p className='text-[#2C1503] text-sm font-semibold'>Cash on Delivery</p>
-                    <p className='text-gray-400 text-xs'>Pay when your order arrives</p>
+                    <p className='text-[#2C1503] text-sm font-semibold'>
+                      {needsDelivery ? 'Cash on Delivery' : 'Cash on Pick-up'}
+                    </p>
+                    <p className='text-gray-400 text-xs'>
+                      {needsDelivery ? 'Pay when your order arrives' : 'Pay when you pick up your order'}
+                    </p>
                   </div>
                 </label>
                 <label className={`flex items-center gap-4 border rounded-xl px-4 py-4 cursor-pointer transition ${paymentMethod === 'gcash' ? 'border-[#C4A882] bg-[#FAF6F0]' : 'border-gray-200'}`}>
@@ -691,14 +763,22 @@ const Checkout = () => {
                     <p className='text-green-400 text-xs font-semibold'>-₱{pointsDiscount.toFixed(2)}</p>
                   </div>
                 )}
-                <div className='flex justify-between'>
-                  <p className='text-[#C4A882]/60 text-xs'>
-                    Delivery {selectedZone && `(${selectedZone.name})`}
-                  </p>
-                  <p className='text-white text-xs font-semibold'>
-                    {!selectedZone ? '—' : deliveryFee === 0 ? 'Free' : `₱${deliveryFee.toFixed(2)}`}
-                  </p>
-                </div>
+                {needsDelivery && (
+                  <div className='flex justify-between'>
+                    <p className='text-[#C4A882]/60 text-xs'>
+                      Delivery {selectedZone && `(${selectedZone.name})`}
+                    </p>
+                    <p className='text-white text-xs font-semibold'>
+                      {!selectedZone ? '—' : deliveryFee === 0 ? 'Free' : `₱${deliveryFee.toFixed(2)}`}
+                    </p>
+                  </div>
+                )}
+                {!needsDelivery && (
+                  <div className='flex justify-between'>
+                    <p className='text-[#C4A882]/60 text-xs'>Delivery</p>
+                    <p className='text-green-400 text-xs font-semibold'>None (Pick-up)</p>
+                  </div>
+                )}
                 {downpaymentRate > 0 && (
                   <>
                     <div className='h-px bg-white/10 my-1' />
@@ -721,11 +801,11 @@ const Checkout = () => {
                 <p className='text-white font-bold text-xl'>₱{total.toFixed(2)}</p>
               </div>
 
-              {/* Minimum order warning banner */}
-              {subtotal > 0 && belowMinOrder && (
+              {/* Item minimum warning banner */}
+              {belowMinItems && (
                 <div className='bg-amber-500/20 border border-amber-400/30 rounded-xl px-3 py-2.5 mb-3'>
                   <p className='text-amber-200 text-xs font-semibold'>
-                    ⚠️ Add ₱{amountToMin.toFixed(2)} more to reach the ₱{GLOBAL_MIN_ORDER.toFixed(2)} minimum order.
+                    ⚠️ Add {minItems - totalItems} more item(s) to reach the {minItems}-item minimum for {orderType} orders.
                   </p>
                 </div>
               )}
@@ -733,13 +813,13 @@ const Checkout = () => {
               <div className='flex items-center gap-2 bg-white/10 rounded-xl px-3 py-2 mb-4'>
                 <span className='text-sm'>{paymentMethod === 'cod' ? '🏦' : '📱'}</span>
                 <p className='text-white text-xs font-semibold'>
-                  {paymentMethod === 'cod' ? 'Cash on Delivery' : 'GCash'}
+                  {paymentMethod === 'cod' ? (needsDelivery ? 'Cash on Delivery' : 'Cash on Pick-up') : 'GCash'}
                 </p>
               </div>
             </div>
 
-            {errors.minOrder && (
-              <p className='text-red-300 text-xs text-center mb-2'>{errors.minOrder}</p>
+            {errors.minItems && (
+              <p className='text-red-300 text-xs text-center mb-2'>{errors.minItems}</p>
             )}
             {errors.submit && (
               <p className='text-red-300 text-xs text-center mb-2'>{errors.submit}</p>

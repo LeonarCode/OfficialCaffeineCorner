@@ -4,6 +4,7 @@ from django.contrib import admin
 from django.contrib import admin
 from unfold.admin import ModelAdmin, TabularInline, format_html, mark_safe
 from .models import ActivityLog, Category, Product, Variant, Rating, Order, OrderItem, CartItem, LoyaltyPoint, Notification, TownZone
+from inventory.models import Ingredient
 from unfold.decorators import action
 
 
@@ -31,11 +32,6 @@ def _badge(label, variant='base'):
 def mark_confirmed(modeladmin, request, queryset):
     updated = queryset.exclude(status='cancelled').update(status='confirmed')
     modeladmin.message_user(request, f'{updated} order(s) marked as Confirmed.')
-
-@admin.action(description='☕ Mark as Processing')
-def mark_processing(modeladmin, request, queryset):
-    updated = queryset.exclude(status='cancelled').update(status='processing')
-    modeladmin.message_user(request, f'{updated} order(s) marked as Processing.')
 
 @admin.action(description='🎉 Mark as Delivered')
 def mark_delivered(modeladmin, request, queryset):
@@ -107,6 +103,14 @@ class VariantAdmin(ModelAdmin):
     search_fields = ['product__name', 'sku']
 
 
+class IngredientInline(TabularInline):
+    model = Ingredient
+    fk_name = 'product'
+    extra = 0
+    fields = ['inventory', 'quantity', 'unit', 'notes']
+    autocomplete_fields = ['inventory']
+
+
 class OrderItemInline(TabularInline):
     model = OrderItem
     extra = 0
@@ -124,7 +128,7 @@ class ProductAdmin(ModelAdmin):
     list_display = ['name', 'category', 'price', 'is_available', 'is_featured', 'is_seasonal', 'sort_order']
     list_filter = ['category', 'is_available', 'is_featured', 'is_seasonal']
     search_fields = ['name', 'sku']
-    inlines = [VariantInline]
+    inlines = [VariantInline, IngredientInline]
 
 
 @admin.register(Order)
@@ -133,21 +137,49 @@ class OrderAdmin(ModelAdmin):
     list_display    = ['id', 'email', 'phone', 'order_type', 'show_status', 'payment_method', 'show_payment_status', 'total_price', 'created_at', 'print_receipt_link']
     list_filter     = ['status', 'payment_method', 'payment_status', 'order_type']
     search_fields   = ['email', 'phone', 'id']
-    readonly_fields = ['total_price', 'item_count', 'points_earned', 'points_used', 'downpayment_amount', 'remaining_balance', 'created_at', 'updated_at']
     inlines         = [OrderItemInline]
     actions         = [
         mark_confirmed,
-        mark_processing,
         mark_delivered,
         mark_cancelled,
         mark_payment_paid,
         mark_payment_unpaid,
     ]
 
+    # Always shown on the change form, whatever their value.
+    ALWAYS_FIELDS = [
+        'email', 'phone', 'address', 'order_type', 'status',
+        'payment_method', 'payment_status', 'total_price', 'item_count',
+        'created_at', 'updated_at',
+    ]
+    # Shown only when the order actually has a value for them.
+    OPTIONAL_FIELDS = [
+        'user', 'notes', 'event_date', 'pax', 'table_number', 'zone', 'delivery_fee',
+        'gcash_ref', 'paymongo_id', 'delivery_proof_photo', 'delivered_at',
+        'rider_notes', 'points_earned', 'points_used', 'discount',
+        'downpayment_amount', 'remaining_balance',
+    ]
+    ADD_FIELDS = [f.name for f in Order._meta.fields if f.name != 'id']
+    ADD_READONLY_FIELDS = ['created_at', 'updated_at']
+
+    def get_fields(self, request, obj=None):
+        if obj is None:
+            return self.ADD_FIELDS
+        fields = list(self.ALWAYS_FIELDS)
+        for name in self.OPTIONAL_FIELDS:
+            if getattr(obj, name, None):
+                fields.append(name)
+        fields.append('assigned_rider')
+        return fields
+
+    def get_readonly_fields(self, request, obj=None):
+        if obj is None:
+            return self.ADD_READONLY_FIELDS
+        return [f for f in self.get_fields(request, obj) if f != 'assigned_rider']
+
     STATUS_COLORS = {
         'pending':    'warning',
         'confirmed':  'info',
-        'processing': 'primary',
         'delivered':  'success',
         'cancelled':  'danger',
     }

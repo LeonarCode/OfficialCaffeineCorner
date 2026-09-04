@@ -8,6 +8,12 @@ const api = axios.create({
 })
 
 // ─── Helpers ──────────────────────────────────────────────
+const isRiderRoute = () => window.location.pathname.startsWith('/rider')
+
+const getTokenKeys = () => isRiderRoute()
+    ? { access: 'rider_access', refresh: 'rider_refresh' }
+    : { access: 'access', refresh: 'refresh' }
+
 const isTokenExpired = (token) => {
     try {
         const decoded = jwtDecode(token)
@@ -18,12 +24,17 @@ const isTokenExpired = (token) => {
 }
 
 const clearTokens = () => {
-    localStorage.removeItem('access')
-    localStorage.removeItem('refresh')
+    const { access, refresh } = getTokenKeys()
+    localStorage.removeItem(access)
+    localStorage.removeItem(refresh)
+    if (isRiderRoute()) {
+        localStorage.removeItem('rider_name')
+    }
 }
 
 const refreshAccessToken = async () => {
-    const refresh = localStorage.getItem('refresh')
+    const { access, refresh: refreshKey } = getTokenKeys()
+    const refresh = localStorage.getItem(refreshKey)
     if (!refresh || isTokenExpired(refresh)) {
         clearTokens()
         return null
@@ -31,7 +42,7 @@ const refreshAccessToken = async () => {
     try {
         const res = await axios.post(`${BASE_URL}/api/auth/token/refresh/`, { refresh })
         const newAccess = res.data.access
-        localStorage.setItem('access', newAccess)
+        localStorage.setItem(access, newAccess)
         return newAccess
     } catch {
         clearTokens()
@@ -41,14 +52,15 @@ const refreshAccessToken = async () => {
 
 // ─── Request Interceptor ──────────────────────────────────
 api.interceptors.request.use(async (config) => {
-    let token = localStorage.getItem('access')
+    const { access } = getTokenKeys()
+    let token = localStorage.getItem(access)
 
     if (token && isTokenExpired(token)) {
         // Try to refresh
         token = await refreshAccessToken()
         if (!token) {
-            // Refresh failed — redirect to signin
-            window.location.href = '/signin'
+            // Refresh failed — redirect to the right login page
+            window.location.href = isRiderRoute() ? '/rider/login' : '/signin'
             return Promise.reject(new Error('Session expired'))
         }
     }
@@ -76,7 +88,7 @@ api.interceptors.response.use(
                 return api(originalRequest)  // retry original request
             } else {
                 clearTokens()
-                window.location.href = '/signin'
+                window.location.href = isRiderRoute() ? '/rider/login' : '/signin'
             }
         }
 

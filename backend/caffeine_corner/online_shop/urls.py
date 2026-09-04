@@ -4,7 +4,9 @@ from .views import (
     RatingListCreateView, CartListView, CartAddView,
     CartUpdateView, CartDeleteView,
     OrderListView, OrderCreateView, OrderDetailView,
-    LoyaltyPointView, RatingListCreateView, paymongo_webhook, CreatePayMongoSourceView, TownZoneListView
+    LoyaltyPointView, RatingListCreateView, paymongo_webhook, CreatePayMongoSourceView, TownZoneListView,
+    RiderOrderListView, RiderOrderHistoryView,
+    RiderMarkDeliveredView, RiderStatsView,
 )
 
 urlpatterns = [
@@ -35,4 +37,10 @@ urlpatterns = [
     path('paymongo/create-source/', CreatePayMongoSourceView.as_view(), name='create-paymongo-source'),
     # Town Zones
     path('zones/', TownZoneListView.as_view(), name='zones'),
+
+    # Rider-specific endpoints
+    path('rider/orders/',                RiderOrderListView.as_view(),    name='rider-orders'),
+    path('rider/orders/history/',         RiderOrderHistoryView.as_view(), name='rider-history'),
+    path('rider/orders/<int:order_id>/deliver/', RiderMarkDeliveredView.as_view(), name='rider-deliver'),
+    path('rider/stats/',                  RiderStatsView.as_view(),        name='rider-stats'),
 ]

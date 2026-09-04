@@ -4,6 +4,7 @@ from django.shortcuts import render
 # inventory/views.py
 from django.db.models import Sum, F, Count, Avg
 from django.utils import timezone
+from decimal import Decimal
 import datetime
 import json
 from online_shop.models import Order, Product, LoyaltyPoint, OrderItem, Notification, ActivityLog
@@ -382,6 +383,101 @@ def sales_report_view(request):
         'years': years,
     }
     return render(request, 'admin/sales_report.html', context)
+
+
+@staff_member_required
+def sales_report_document_view(request):
+    """Printable, document-style sales report — 'Export as PDF' just prints
+    this page (browser Save-as-PDF), so everything needed has to be baked
+    into the HTML server-side rather than fetched client-side."""
+    today = timezone.now().date()
+
+    def _parse_date(value, fallback):
+        try:
+            return datetime.date.fromisoformat(value) if value else fallback
+        except ValueError:
+            return fallback
+
+    date_from = _parse_date(request.GET.get('date_from', ''), today - datetime.timedelta(days=29))
+    date_to   = _parse_date(request.GET.get('date_to', ''), today)
+    if date_from > date_to:
+        date_from, date_to = date_to, date_from
+
+    orders = (
+        Order.objects
+        .filter(created_at__date__gte=date_from, created_at__date__lte=date_to)
+        .select_related('zone')
+        .prefetch_related('items__product', 'items__variant')
+        .order_by('created_at')
+    )
+
+    total_orders    = orders.count()
+    delivered_count = orders.filter(status='delivered').count()
+    cancelled_count = orders.filter(status='cancelled').count()
+    total_revenue   = sum((o.total_price for o in orders), Decimal('0'))
+    avg_order_value = (total_revenue / total_orders) if total_orders else Decimal('0')
+
+    # Items sold — detailed transaction log
+    transaction_log = []
+    for order in orders:
+        for item in order.items.all():
+            transaction_log.append({
+                'date':     order.created_at,
+                'order_id': order.id,
+                'name':     item.product.name if item.product else '—',
+                'size':     item.variant.get_size_display() if item.variant else '—',
+                'qty':      item.quantity,
+                'price':    item.price,
+                'subtotal': item.subtotal,
+            })
+
+    # Delivery fee summary — orders that actually had a delivery zone/fee
+    delivery_orders      = [o for o in orders if o.zone_id and o.delivery_fee]
+    total_delivery_fees  = sum((o.delivery_fee for o in delivery_orders), Decimal('0'))
+
+    # Payment & order type breakdown
+    gcash_orders   = orders.filter(payment_method='gcash').count()
+    cash_orders    = total_orders - gcash_orders
+    delivery_count = sum(1 for o in orders if o.zone_id)
+    pickup_count   = total_orders - delivery_count
+
+    # Downpayment collection summary
+    with_downpayment     = [o for o in orders if o.downpayment_amount]
+    downpayment_total    = sum((o.downpayment_amount for o in with_downpayment), Decimal('0'))
+    remaining_total      = sum((o.remaining_balance for o in with_downpayment), Decimal('0'))
+    full_payment_orders  = [o for o in orders if not o.downpayment_amount]
+    full_payment_total   = sum((o.total_price for o in full_payment_orders), Decimal('0'))
+
+    context = {
+        **admin.site.each_context(request),
+        'title':          'Sales Report',
+        'date_from':      date_from,
+        'date_to':        date_to,
+        'generated_at':   timezone.now(),
+        'prepared_by':    request.user.get_full_name() or request.user.email,
+        'reference_no':   f'RPT-{timezone.now().strftime("%Y%m%d-%H%M%S")}',
+        'summary': {
+            'total_revenue':   total_revenue,
+            'total_orders':    total_orders,
+            'delivered_count': delivered_count,
+            'delivered_pct':   round(delivered_count / total_orders * 100, 1) if total_orders else 0,
+            'cancelled_count': cancelled_count,
+            'avg_order_value': avg_order_value,
+        },
+        'transaction_log':        transaction_log,
+        'delivery_orders':        delivery_orders,
+        'total_delivery_fees':    total_delivery_fees,
+        'gcash_orders':           gcash_orders,
+        'cash_orders':            cash_orders,
+        'delivery_count':         delivery_count,
+        'pickup_count':           pickup_count,
+        'orders_with_downpayment': len(with_downpayment),
+        'downpayment_total':      downpayment_total,
+        'remaining_total':        remaining_total,
+        'full_payment_count':     len(full_payment_orders),
+        'full_payment_total':     full_payment_total,
+    }
+    return render(request, 'admin/sales_report_document.html', context)
 
 def dashboard_callback(request, context):
 
