@@ -145,12 +145,13 @@ class StockMovement(models.Model):
     reference       = models.CharField(max_length=100, blank=True,
                                        help_text="PO number, invoice number, etc.")
     notes           = models.TextField(blank=True)
-    performed_by    = models.ForeignKey(           # ← FIXED
-                          settings.AUTH_USER_MODEL,
-                          on_delete=models.SET_NULL,
-                          null=True, blank=True,
-                          related_name="stock_movements",
-                      )
+    performed_by = models.ForeignKey(
+            settings.AUTH_USER_MODEL,
+            on_delete=models.SET_NULL,
+            null=True, blank=True,
+            related_name="stock_movements",
+            limit_choices_to={'is_staff': True},  # ← dagdag ito
+        )
     created_at      = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -207,12 +208,13 @@ class PurchaseOrder(models.Model):
     expected_at = models.DateField(null=True, blank=True)
     received_at = models.DateField(null=True, blank=True)
     notes       = models.TextField(blank=True)
-    created_by  = models.ForeignKey(           # ← FIXED
-                      settings.AUTH_USER_MODEL,
-                      on_delete=models.SET_NULL,
-                      null=True, blank=True,
-                      related_name="purchase_orders",
-                  )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="purchase_orders",
+        limit_choices_to={'is_staff': True},  # ← dagdag ito
+    )
 
     class Meta:
         ordering = ("-ordered_at",)

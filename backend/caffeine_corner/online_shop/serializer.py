@@ -51,7 +51,7 @@ class ProductSerializer(serializers.ModelSerializer):
 class TownZoneSerializer(serializers.ModelSerializer):
     class Meta:
         model = TownZone
-        fields = ['id', 'name', 'delivery_fee', 'min_order_amount', 'estimated_time']
+        fields = ['id', 'name', 'delivery_fee', 'estimated_time']  # tanggalin min_order_amount
 
 
 class MarkDeliveredSerializer(serializers.Serializer):
@@ -101,7 +101,7 @@ class CreateOrderSerializer(serializers.Serializer):
     points_to_use  = serializers.IntegerField(required=False, default=0)
     items          = serializers.ListField(child=serializers.DictField(), required=False, default=list)
     order_type = serializers.ChoiceField(
-        choices=['regular', 'bulk', 'dine_in', 'pickup'],  # ← dagdag pickup
+        choices=['regular', 'dine_in', 'pickup'],  # ← dagdag pickup
         default='regular'
     )
     event_date     = serializers.DateField(required=False, allow_null=True)

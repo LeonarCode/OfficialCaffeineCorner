@@ -1,10 +1,18 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
-from unfold.admin import ModelAdmin
+from unfold.admin import ModelAdmin, TabularInline
 from .models import User, OTPCode
+from online_shop.models import CartItem
 from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 from unfold.decorators import action
+
+
+class CartItemInline(TabularInline):
+    model = CartItem
+    extra = 0
+    fields = ['product', 'variant', 'quantity']
+    autocomplete_fields = ['product', 'variant']
 
 
 @admin.register(User)
@@ -13,6 +21,7 @@ class UserAdmin(BaseUserAdmin, ModelAdmin):
     list_filter     = ['is_rider', 'rider_status', 'is_staff']
     search_fields   = ['email', 'username', 'phone']
     actions         = ['approve_riders', 'reject_riders']
+    inlines         = [CartItemInline]
 
     fieldsets = BaseUserAdmin.fieldsets + (
         ('Rider Info', {'fields': ('is_rider', 'phone', 'rider_status')}),

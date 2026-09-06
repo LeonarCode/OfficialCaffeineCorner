@@ -350,15 +350,8 @@ from decimal import Decimal
 class OrderCreateView(APIView):
     permission_classes = [AllowAny]
 
-    ITEM_MIN = {
-        'regular': 3,
-        'bulk':    5,
-    }
-    DOWNPAYMENT_RATES = {
-        'regular': Decimal('0.30'),
-        'bulk':    Decimal('0.50'),
-    }
-    DOWNPAYMENT_THRESHOLD = Decimal('1000')
+    DOWNPAYMENT_RATE       = Decimal('0.30')
+    DOWNPAYMENT_THRESHOLD  = Decimal('1000')
 
     def post(self, request):
         serializer = CreateOrderSerializer(data=request.data)
@@ -381,18 +374,10 @@ class OrderCreateView(APIView):
         if not data['items']:
             return Response({'error': 'Your order has no items.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # ─── Minimum item count (regular = 3, bulk = 5) ─────────────
-        total_qty = sum(item.get('quantity', 1) for item in data['items'])
-        min_items = self.ITEM_MIN.get(order_type)
-        if min_items and total_qty < min_items:
-            return Response({
-                'error': f'A minimum of {min_items} items is required for {order_type} orders. You currently have {total_qty}.'
-            }, status=status.HTTP_400_BAD_REQUEST)
-
-        # ─── Zone Validation (regular + bulk lang — may delivery) ───
+        # ─── Zone Validation — regular lang ang may delivery ────
         zone         = None
         delivery_fee = 0
-        if order_type in ['regular', 'bulk']:
+        if order_type == 'regular':
             zone_id = data.get('zone_id')
             if not zone_id:
                 return Response({'error': 'Please select a delivery zone.'}, status=status.HTTP_400_BAD_REQUEST)
@@ -423,8 +408,6 @@ class OrderCreateView(APIView):
             discount=discount,
             points_used=points_used,
             order_type=order_type,
-            event_date=data.get('event_date'),
-            pax=data.get('pax', 0),
             table_number=data.get('table_number', ''),
             zone=zone,
             delivery_fee=delivery_fee,
@@ -443,18 +426,10 @@ class OrderCreateView(APIView):
             OrderItem.objects.create(order=order, product=product, variant=variant, quantity=quantity, price=price)
             subtotal += price * quantity
 
-        # ─── Minimum order check per zone (hindi na global ₱1000) ────
-        if zone and zone.min_order_amount > 0 and subtotal < zone.min_order_amount:
-            order.delete()
-            return Response({
-                'error': f'Minimum order for {zone.name} is ₱{zone.min_order_amount}. Your order subtotal is ₱{subtotal}.'
-            }, status=status.HTTP_400_BAD_REQUEST)
-
-        # ─── Downpayment — regular/bulk lang, kapag umabot ng ₱1000 ──
+        # ─── Downpayment — regular lang, kapag umabot ng ₱1000 (kasama delivery fee) ──
         grand_total = subtotal + delivery_fee
-        if order_type in self.DOWNPAYMENT_RATES and grand_total >= self.DOWNPAYMENT_THRESHOLD:
-            rate                      = self.DOWNPAYMENT_RATES[order_type]
-            downpayment               = round(grand_total * rate, 2)
+        if order_type == 'regular' and grand_total >= self.DOWNPAYMENT_THRESHOLD:
+            downpayment               = round(grand_total * self.DOWNPAYMENT_RATE, 2)
             order.downpayment_amount  = downpayment
             order.remaining_balance   = grand_total - downpayment
             order.payment_status      = 'unpaid'

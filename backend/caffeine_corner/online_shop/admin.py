@@ -3,7 +3,7 @@ from django.contrib import admin
 # Register your models here.
 from django.contrib import admin
 from unfold.admin import ModelAdmin, TabularInline, format_html, mark_safe
-from .models import ActivityLog, Category, Product, Variant, Rating, Order, OrderItem, CartItem, LoyaltyPoint, Notification, TownZone
+from .models import ActivityLog, Category, Product, Variant, Rating, Order, OrderItem, LoyaltyPoint, Notification, TownZone
 from inventory.models import Ingredient
 from unfold.decorators import action
 
@@ -221,12 +221,6 @@ class RatingAdmin(ModelAdmin):
     search_fields = ['product__name', 'user__email']
 
 
-@admin.register(CartItem)
-class CartItemAdmin(ModelAdmin):
-    list_display = ['user', 'product', 'variant', 'quantity']
-    search_fields = ['user__email', 'product__name']
-
-
 @admin.register(LoyaltyPoint)
 class LoyaltyPointAdmin(ModelAdmin):
     list_display = ['user', 'points', 'discount_value', 'redeemable_points', 'last_updated']
@@ -272,6 +266,6 @@ class ActivityLogAdmin(ModelAdmin):
 
 @admin.register(TownZone)
 class TownZoneAdmin(ModelAdmin):
-    list_display = ['name', 'delivery_fee', 'min_order_amount', 'estimated_time', 'is_active']
-    list_editable = ['delivery_fee', 'min_order_amount', 'estimated_time', 'is_active']
+    list_display  = ['name', 'delivery_fee', 'estimated_time', 'is_active']
+    list_editable = ['delivery_fee', 'is_active']
     search_fields = ['name']

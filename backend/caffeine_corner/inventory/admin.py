@@ -156,14 +156,6 @@ class InventoryAdmin(ModelAdmin):
     show_expiry_status.short_description = _('Expiry')
 
 
-# ─── StockMovement ────────────────────────────────────────────────────────────
-
-@admin.register(StockMovement)
-class StockMovementAdmin(ModelAdmin):
-    list_display    = ['inventory', 'movement_type', 'quantity', 'quantity_change', 'performed_by', 'created_at']
-    list_filter     = ['movement_type']
-    search_fields   = ['inventory__name', 'reference']
-    readonly_fields = ['quantity_change', 'created_at']
 
 
 # ─── PurchaseOrder ────────────────────────────────────────────────────────────

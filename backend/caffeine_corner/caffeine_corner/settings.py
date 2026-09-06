@@ -266,11 +266,6 @@ UNFOLD = {
                         "link": "/admin/export-orders/?format=csv",
                     },
                     {
-                        "title": "Cart Items",
-                        "icon": "shopping_bag",
-                        "link": reverse_lazy("admin:online_shop_cartitem_changelist"),
-                    },
-                    {
                         "title": "Sales Report",
                         "icon": "bar_chart",
                         "link": "/admin/sales-report/",
@@ -327,11 +322,6 @@ UNFOLD = {
                         "title": "Inventory Items",
                         "icon": "inventory",
                         "link": reverse_lazy("admin:inventory_inventory_changelist"),
-                    },
-                    {
-                        "title": "Stock Movements",
-                        "icon": "swap_vert",
-                        "link": reverse_lazy("admin:inventory_stockmovement_changelist"),
                     },
                     {
                         "title": "Purchase Orders",

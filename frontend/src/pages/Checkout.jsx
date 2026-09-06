@@ -7,10 +7,8 @@ import { getZones } from '../services/orderService.js'
 import { useAuth } from '../context/AuthContext'
 
 const STEPS = ['Order Type', 'Delivery', 'Payment']
-const ITEM_MIN = { regular: 3, bulk: 5 }
-const DOWNPAYMENT_RATES = { regular: 0.30, bulk: 0.50 }
+const DOWNPAYMENT_RATE = 0.30
 const DOWNPAYMENT_THRESHOLD = 1000
-const NEEDS_DELIVERY = ['regular', 'bulk']
 
 const Checkout = () => {
   const [cartItems,      setCartItems]      = useState([])
@@ -21,8 +19,6 @@ const Checkout = () => {
   const [showSuccess,    setShowSuccess]    = useState(false)
   const [orderData,      setOrderData]      = useState(null)
   const [orderType,      setOrderType]      = useState('regular')
-  const [eventDate,      setEventDate]      = useState('')
-  const [pax,            setPax]            = useState('')
   const [loyalty,        setLoyalty]        = useState(null)
   const [pointsToUse,    setPointsToUse]    = useState(0)
   const [usePoints,      setUsePoints]      = useState(false)
@@ -70,9 +66,8 @@ const Checkout = () => {
     init()
   }, [])
 
-  const needsDelivery = NEEDS_DELIVERY.includes(orderType)
+  const needsDelivery = orderType === 'regular'
 
-  // Clear zone/address requirements when switching to pickup
   useEffect(() => {
     if (!needsDelivery) {
       setSelectedZone(null)
@@ -99,19 +94,11 @@ const Checkout = () => {
     ? buyNowData.price * quantity
     : cartItems.reduce((sum, item) => sum + parseFloat(item.product_price) * item.quantity, 0)
 
-  const totalItems = buyNowData?.product
-    ? quantity
-    : cartItems.reduce((sum, item) => sum + item.quantity, 0)
-
-  const minItems      = ITEM_MIN[orderType] || 0
-  const belowMinItems = minItems > 0 && totalItems < minItems
-
   const deliveryFee    = needsDelivery && selectedZone ? parseFloat(selectedZone.delivery_fee) : 0
   const pointsDiscount = usePoints && loyalty ? Math.min(pointsToUse * 0.1, subtotal) : 0
   const total          = subtotal + deliveryFee - pointsDiscount
 
-  const downpaymentRate  = (DOWNPAYMENT_RATES[orderType] && total >= DOWNPAYMENT_THRESHOLD)
-    ? DOWNPAYMENT_RATES[orderType] : 0
+  const downpaymentRate  = (orderType === 'regular' && total >= DOWNPAYMENT_THRESHOLD) ? DOWNPAYMENT_RATE : 0
   const downpayment      = downpaymentRate > 0 ? total * downpaymentRate : 0
   const remainingBalance = downpaymentRate > 0 ? total - downpayment : 0
 
@@ -124,14 +111,7 @@ const Checkout = () => {
       e.phone = 'Enter a valid Philippine mobile number (e.g. 09171234567)'
     }
     if (needsDelivery && !form.address) e.address = 'Delivery address is required'
-    if (orderType === 'bulk' && !eventDate) e.eventDate = 'Event date is required'
     if (needsDelivery && !selectedZone) e.zone = 'Please select your delivery zone'
-
-    if (belowMinItems) {
-      e.minItems = `A minimum of ${minItems} items is required for ${orderType} orders. You currently have ${totalItems}.`
-    } else if (needsDelivery && selectedZone && subtotal < selectedZone.min_order_amount) {
-      e.zone = `Minimum order for ${selectedZone.name} is ₱${parseFloat(selectedZone.min_order_amount).toFixed(2)}`
-    }
 
     setErrors(e)
     return Object.keys(e).length === 0
@@ -148,8 +128,6 @@ const Checkout = () => {
         notes:          form.notes,
         payment_method: paymentMethod,
         order_type:     orderType,
-        event_date:     orderType === 'bulk' ? eventDate : null,
-        pax:            orderType === 'bulk' ? parseInt(pax) || 0 : 0,
         points_to_use:  usePoints ? pointsToUse : 0,
         zone_id:        needsDelivery ? (selectedZone?.id || null) : null,
         items: buyNowData?.product
@@ -172,16 +150,7 @@ const Checkout = () => {
   }
 
   const isFormValid = form.email && form.phone && validatePhone(form.phone) &&
-    (!needsDelivery || (form.address && selectedZone)) &&
-    (orderType !== 'bulk' || eventDate) &&
-    !belowMinItems &&
-    (!needsDelivery || !selectedZone || subtotal >= (selectedZone?.min_order_amount || 0))
-
-  const ORDER_TYPE_LABELS = {
-    regular: { icon: '📦', label: 'Regular' },
-    bulk:    { icon: '🍽️', label: 'Bulk / Catering' },
-    pickup:  { icon: '🏪', label: 'Pick-up' },
-  }
+    (!needsDelivery || (form.address && selectedZone))
 
   return (
     <div className='flex flex-col min-h-screen bg-[#FAF6F0]'>
@@ -201,7 +170,7 @@ const Checkout = () => {
                 Order <em className='text-[#C4A882] italic font-serif'>Placed!</em>
               </h2>
               <p className='text-[#C4A882]/60 text-xs tracking-widest uppercase mt-1'>
-                {orderType === 'bulk' ? 'Bulk order received →' : orderType === 'pickup' ? 'Ready for pick-up soon →' : "We're preparing your order →"}
+                {orderType === 'pickup' ? 'Ready for pick-up soon →' : "We're preparing your order →"}
               </p>
             </div>
             <div className='px-6 py-5 flex flex-col gap-3'>
@@ -212,7 +181,7 @@ const Checkout = () => {
               <div className='flex justify-between items-center'>
                 <span className='text-gray-400 text-xs'>Type</span>
                 <span className='text-xs font-semibold px-2 py-0.5 rounded-full bg-gray-100 text-gray-600'>
-                  {ORDER_TYPE_LABELS[orderType]?.icon} {ORDER_TYPE_LABELS[orderType]?.label}
+                  {orderType === 'pickup' ? '🏪 Pick-up' : '📦 Regular'}
                 </span>
               </div>
               {needsDelivery && selectedZone && (
@@ -228,7 +197,7 @@ const Checkout = () => {
               <div className='flex justify-between items-center'>
                 <span className='text-gray-400 text-xs'>Payment</span>
                 <span className='text-[#2C1503] text-xs font-semibold'>
-                  {paymentMethod === 'cod' ? '🏦 Cash on Delivery' : '📱 GCash'}
+                  {paymentMethod === 'cod' ? '🏦 Cash' : '📱 GCash'}
                 </span>
               </div>
               <hr className='border-gray-100' />
@@ -251,7 +220,7 @@ const Checkout = () => {
               {downpaymentRate > 0 && (
                 <>
                   <div className='flex justify-between items-center'>
-                    <span className='text-amber-600 text-xs font-semibold'>Downpayment ({(downpaymentRate * 100).toFixed(0)}%)</span>
+                    <span className='text-amber-600 text-xs font-semibold'>Downpayment (30%)</span>
                     <span className='text-amber-600 text-sm font-bold'>₱{downpayment.toFixed(2)}</span>
                   </div>
                   <div className='flex justify-between items-center'>
@@ -267,7 +236,7 @@ const Checkout = () => {
               {downpaymentRate > 0 && (
                 <div className='bg-amber-50 border border-amber-200 rounded-xl px-3 py-2'>
                   <p className='text-amber-700 text-xs font-semibold'>
-                    ⚠️ Please pay the {(downpaymentRate * 100).toFixed(0)}% downpayment (₱{downpayment.toFixed(2)}) to confirm your order.
+                    ⚠️ Please pay the 30% downpayment (₱{downpayment.toFixed(2)}) to confirm your order.
                   </p>
                 </div>
               )}
@@ -350,9 +319,6 @@ const Checkout = () => {
                   1
                 </div>
                 <h2 className='text-[#2C1503] font-semibold text-sm'>Order Type</h2>
-                {orderType === 'bulk' && (
-                  <span className='text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-semibold'>Bulk</span>
-                )}
                 {orderType === 'pickup' && (
                   <span className='text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-semibold'>Pick-up</span>
                 )}
@@ -367,68 +333,22 @@ const Checkout = () => {
                     <input type='radio' name='orderType' value='regular' checked={orderType === 'regular'} onChange={() => setOrderType('regular')} className='accent-[#3D1F00]' />
                     <div>
                       <p className='text-[#2C1503] text-sm font-semibold'>📦 Regular Order</p>
-                      <p className='text-gray-400 text-xs'>Min. 3 items · Delivery</p>
+                      <p className='text-gray-400 text-xs'>The product will deliver in your area</p>
                     </div>
                   </label>
-                  <label className={`flex items-center gap-3 border rounded-xl px-4 py-3 cursor-pointer transition flex-1 ${orderType === 'bulk' ? 'border-[#C4A882] bg-[#FAF6F0]' : 'border-gray-200'}`}>
-                    <input type='radio' name='orderType' value='bulk' checked={orderType === 'bulk'} onChange={() => setOrderType('bulk')} className='accent-[#3D1F00]' />
+                  <label className={`flex items-center gap-3 border rounded-xl px-4 py-3 cursor-pointer transition flex-1 ${orderType === 'pickup' ? 'border-[#C4A882] bg-[#FAF6F0]' : 'border-gray-200'}`}>
+                    <input type='radio' name='orderType' value='pickup' checked={orderType === 'pickup'} onChange={() => setOrderType('pickup')} className='accent-[#3D1F00]' />
                     <div>
-                      <p className='text-[#2C1503] text-sm font-semibold'>🍽️ Bulk / Catering</p>
-                      <p className='text-gray-400 text-xs'>Min. 5 items · Delivery</p>
+                      <p className='text-[#2C1503] text-sm font-semibold'>🏪 Pick-up</p>
+                      <p className='text-gray-400 text-xs'>No delivery fee</p>
                     </div>
                   </label>
                 </div>
 
-                {/* Pick-up option */}
-                <label className={`flex items-center gap-3 border rounded-xl px-4 py-3 cursor-pointer transition mb-3
-                  ${orderType === 'pickup' ? 'border-[#C4A882] bg-[#FAF6F0]' : 'border-gray-200'}`}>
-                  <input type='radio' name='orderType' value='pickup' checked={orderType === 'pickup'} onChange={() => setOrderType('pickup')} className='accent-[#3D1F00]' />
-                  <div>
-                    <p className='text-[#2C1503] text-sm font-semibold'>🏪 Pick-up</p>
-                    <p className='text-gray-400 text-xs'>No minimum · No delivery fee · Pick up at the shop</p>
-                  </div>
-                </label>
-
-                {/* Item minimum note */}
-                {minItems > 0 && (
-                  <p className='text-gray-400 text-[11px] mb-3'>
-                    ℹ️ Minimum <span className='font-semibold text-[#6f4e37]'>{minItems} items</span> required for {orderType} orders.
-                    {totalItems > 0 && ` You currently have ${totalItems}.`}
-                  </p>
-                )}
-
-                {orderType === 'bulk' && (
-                  <div className='flex flex-col gap-3 bg-amber-50 border border-amber-200 rounded-xl p-4'>
-                    <p className='text-amber-700 text-xs font-semibold'>⚠️ Bulk orders may require a downpayment if the total reaches ₱1,000. Remaining balance upon delivery.</p>
-                    <div>
-                      <label className='text-[#2C1503] text-xs font-semibold uppercase mb-1.5 block'>
-                        Event Date <span className='text-red-400'>*</span>
-                      </label>
-                      <input
-                        type='date'
-                        value={eventDate}
-                        onChange={e => { setEventDate(e.target.value); setErrors(prev => ({ ...prev, eventDate: '' })) }}
-                        className={`w-full border rounded-xl px-4 py-3 text-sm outline-none transition bg-white
-                          ${errors.eventDate ? 'border-red-400' : 'border-gray-200 focus:border-[#C4A882]'}`}
-                      />
-                      {errors.eventDate && <p className='text-red-400 text-xs mt-1'>{errors.eventDate}</p>}
-                    </div>
-                    <div>
-                      <label className='text-[#2C1503] text-xs font-semibold uppercase mb-1.5 block'>Number of Persons (Pax)</label>
-                      <input
-                        type='number' min='1' value={pax}
-                        onChange={e => setPax(e.target.value)}
-                        placeholder='e.g. 50'
-                        className='w-full border border-gray-200 rounded-xl px-4 py-3 text-sm outline-none focus:border-[#C4A882] transition bg-white'
-                      />
-                    </div>
-                  </div>
-                )}
-
                 {orderType === 'regular' && (
                   <div className='flex flex-col gap-2 bg-blue-50 border border-blue-200 rounded-xl p-4'>
                     <p className='text-blue-700 text-xs font-semibold'>
-                      ℹ️ Orders reaching ₱1,000 require a 30% downpayment to confirm. Remaining balance upon delivery.
+                      ℹ️ Orders reaching ₱1,000 (including delivery fee) require a 30% downpayment to confirm. Remaining balance upon delivery.
                     </p>
                   </div>
                 )}
@@ -472,7 +392,6 @@ const Checkout = () => {
             {currentStep === 1 && (
               <div className='px-5 pb-5 flex flex-col gap-4'>
 
-                {/* Zone Selector — regular/bulk lang */}
                 {needsDelivery && (
                   <div>
                     <label className='text-[#2C1503] text-xs font-semibold uppercase mb-1.5 block'>
@@ -502,12 +421,9 @@ const Checkout = () => {
                               />
                               <div>
                                 <p className='text-[#2C1503] text-sm font-semibold'>{zone.name}</p>
-                                <div className='flex items-center gap-2 text-xs text-gray-400'>
-                                  {zone.estimated_time && <span>⏱ {zone.estimated_time}</span>}
-                                  {zone.min_order_amount > 0 && (
-                                    <span>· Min. ₱{parseFloat(zone.min_order_amount).toFixed(0)}</span>
-                                  )}
-                                </div>
+                                {zone.estimated_time && (
+                                  <p className='text-xs text-gray-400'>⏱ {zone.estimated_time}</p>
+                                )}
                               </div>
                             </div>
                             <p className='text-[#6f4e37] text-sm font-bold shrink-0'>
@@ -541,7 +457,6 @@ const Checkout = () => {
                   }
                 </div>
 
-                {/* Phone Number — Anti-troll requirement */}
                 <div>
                   <label className='text-[#2C1503] text-xs font-semibold uppercase mb-1.5 block'>
                     Phone Number <span className='text-red-400'>*</span>
@@ -763,7 +678,7 @@ const Checkout = () => {
                     <p className='text-green-400 text-xs font-semibold'>-₱{pointsDiscount.toFixed(2)}</p>
                   </div>
                 )}
-                {needsDelivery && (
+                {needsDelivery ? (
                   <div className='flex justify-between'>
                     <p className='text-[#C4A882]/60 text-xs'>
                       Delivery {selectedZone && `(${selectedZone.name})`}
@@ -772,8 +687,7 @@ const Checkout = () => {
                       {!selectedZone ? '—' : deliveryFee === 0 ? 'Free' : `₱${deliveryFee.toFixed(2)}`}
                     </p>
                   </div>
-                )}
-                {!needsDelivery && (
+                ) : (
                   <div className='flex justify-between'>
                     <p className='text-[#C4A882]/60 text-xs'>Delivery</p>
                     <p className='text-green-400 text-xs font-semibold'>None (Pick-up)</p>
@@ -783,7 +697,7 @@ const Checkout = () => {
                   <>
                     <div className='h-px bg-white/10 my-1' />
                     <div className='flex justify-between'>
-                      <p className='text-amber-300 text-xs'>Downpayment ({(downpaymentRate * 100).toFixed(0)}%)</p>
+                      <p className='text-amber-300 text-xs'>Downpayment (30%)</p>
                       <p className='text-amber-300 text-xs font-bold'>₱{downpayment.toFixed(2)}</p>
                     </div>
                     <div className='flex justify-between'>
@@ -801,15 +715,6 @@ const Checkout = () => {
                 <p className='text-white font-bold text-xl'>₱{total.toFixed(2)}</p>
               </div>
 
-              {/* Item minimum warning banner */}
-              {belowMinItems && (
-                <div className='bg-amber-500/20 border border-amber-400/30 rounded-xl px-3 py-2.5 mb-3'>
-                  <p className='text-amber-200 text-xs font-semibold'>
-                    ⚠️ Add {minItems - totalItems} more item(s) to reach the {minItems}-item minimum for {orderType} orders.
-                  </p>
-                </div>
-              )}
-
               <div className='flex items-center gap-2 bg-white/10 rounded-xl px-3 py-2 mb-4'>
                 <span className='text-sm'>{paymentMethod === 'cod' ? '🏦' : '📱'}</span>
                 <p className='text-white text-xs font-semibold'>
@@ -818,9 +723,6 @@ const Checkout = () => {
               </div>
             </div>
 
-            {errors.minItems && (
-              <p className='text-red-300 text-xs text-center mb-2'>{errors.minItems}</p>
-            )}
             {errors.submit && (
               <p className='text-red-300 text-xs text-center mb-2'>{errors.submit}</p>
             )}
@@ -838,7 +740,7 @@ const Checkout = () => {
                   </svg>
                   Placing Order...
                 </span>
-              ) : downpaymentRate > 0 ? `→ PLACE ORDER (${(downpaymentRate * 100).toFixed(0)}% DP)` : '→ PLACE ORDER'}
+              ) : downpaymentRate > 0 ? `→ PLACE ORDER (30% DP)` : '→ PLACE ORDER'}
             </button>
             <p className='text-[#C4A882]/40 text-[10px] text-center mt-3'>We verify orders via phone number</p>
           </div>

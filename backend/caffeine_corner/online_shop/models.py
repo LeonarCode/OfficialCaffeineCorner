@@ -1,7 +1,5 @@
 from decimal import Decimal
 
-from django.db import models
-
 # Create your models here.
 from django.db import models
 from django.conf import settings
@@ -132,11 +130,11 @@ class Rating(models.Model):
         return f"{self.product.name} - {self.rating} stars by {self.user.username}"
 
 class TownZone(models.Model):
-    name          = models.CharField(max_length=100, unique=True)
-    delivery_fee  = models.DecimalField(max_digits=10, decimal_places=2, default=0)
-    is_active     = models.BooleanField(default=True, help_text="Uncheck para hindi pa muna ma-deliver dito")
-    min_order_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0, help_text="Minimum order para dito maka-order")
-    estimated_time    = models.CharField(max_length=50, blank=True, help_text="e.g. '30-45 mins'")
+    name           = models.CharField(max_length=100, unique=True)
+    delivery_fee   = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    is_active      = models.BooleanField(default=True, help_text="Uncheck para hindi pa muna ma-deliver dito")
+    estimated_time = models.CharField(max_length=50, blank=True, help_text="e.g. '30-45 mins'")
+    # min_order_amount — TINANGGAL
 
     class Meta:
         ordering = ("name",)
@@ -149,7 +147,6 @@ class TownZone(models.Model):
 class Order(models.Model):
     ORDER_TYPE_CHOICES = [
         ('regular', 'Regular'),
-        ('bulk',    'Bulk / Catering'),
         ('dine_in', 'Dine-in'),
         ('pickup',  'Pick-up'),
     ]

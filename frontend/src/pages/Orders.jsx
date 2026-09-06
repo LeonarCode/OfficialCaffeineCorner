@@ -5,7 +5,6 @@ import { getOrders } from '../services/orderService'
 const STATUS_CONFIG = {
   pending:    { label: 'Pending',    color: 'bg-yellow-100 text-yellow-700',  dot: 'bg-yellow-400',  step: 1 },
   confirmed:  { label: 'Confirmed',  color: 'bg-blue-100 text-blue-700',      dot: 'bg-blue-400',    step: 2 },
-  processing: { label: 'Processing', color: 'bg-purple-100 text-purple-700',  dot: 'bg-purple-400',  step: 3 },
   delivered:  { label: 'Delivered',  color: 'bg-green-100 text-green-700',    dot: 'bg-green-400',   step: 4 },
   cancelled:  { label: 'Cancelled',  color: 'bg-red-100 text-red-700',        dot: 'bg-red-400',     step: 0 },
 }
@@ -19,9 +18,9 @@ const PAYMENT_STATUS_CONFIG = {
 }
 
 const ORDER_TYPE_CONFIG = {
-  regular: { label: '📦 Regular',        color: 'bg-gray-100 text-gray-600' },
-  bulk:    { label: '🍽️ Bulk/Catering',  color: 'bg-amber-100 text-amber-700' },
-  dine_in: { label: '🪑 Dine-in',        color: 'bg-teal-100 text-teal-700' },
+  regular: { label: '📦 Regular',   color: 'bg-gray-100 text-gray-600' },
+  pickup:  { label: '🏪 Pick-up',   color: 'bg-blue-100 text-blue-700' },
+  dine_in: { label: '🪑 Dine-in',   color: 'bg-teal-100 text-teal-700' },
 }
 
 const STEPS = [
@@ -229,38 +228,29 @@ const Orders = () => {
                         </div>
                       )}
 
-                      {/* Bulk Order Details */}
-                      {order.order_type === 'bulk' && (
+                      {/* Regular Order — Downpayment Details */}
+                      {order.order_type === 'regular' && parseFloat(order.downpayment_amount) > 0 && (
                         <div className='bg-amber-50 border border-amber-200 rounded-xl p-4 mb-4'>
-                          <p className='text-amber-700 text-xs font-bold uppercase tracking-wide mb-2'>🍽️ Bulk Order Details</p>
+                          <p className='text-amber-700 text-xs font-bold uppercase tracking-wide mb-2'>⚡ Downpayment Details</p>
                           <div className='grid grid-cols-2 gap-2'>
-                            {order.event_date && (
-                              <div>
-                                <p className='text-amber-600/70 text-xs'>Event Date</p>
-                                <p className='text-amber-800 text-sm font-semibold'>
-                                  {new Date(order.event_date).toLocaleDateString('en-PH', { month: 'long', day: 'numeric', year: 'numeric' })}
-                                </p>
-                              </div>
-                            )}
-                            {order.pax > 0 && (
-                              <div>
-                                <p className='text-amber-600/70 text-xs'>Pax</p>
-                                <p className='text-amber-800 text-sm font-semibold'>{order.pax} persons</p>
-                              </div>
-                            )}
-                            {parseFloat(order.downpayment_amount) > 0 && (
-                              <>
-                                <div>
-                                  <p className='text-amber-600/70 text-xs'>Downpayment (50%)</p>
-                                  <p className='text-amber-800 text-sm font-semibold'>₱{parseFloat(order.downpayment_amount).toFixed(2)}</p>
-                                </div>
-                                <div>
-                                  <p className='text-amber-600/70 text-xs'>Remaining Balance</p>
-                                  <p className='text-amber-800 text-sm font-semibold'>₱{parseFloat(order.remaining_balance).toFixed(2)}</p>
-                                </div>
-                              </>
-                            )}
+                            <div>
+                              <p className='text-amber-600/70 text-xs'>Downpayment (30%)</p>
+                              <p className='text-amber-800 text-sm font-semibold'>₱{parseFloat(order.downpayment_amount).toFixed(2)}</p>
+                            </div>
+                            <div>
+                              <p className='text-amber-600/70 text-xs'>Remaining Balance</p>
+                              <p className='text-amber-800 text-sm font-semibold'>₱{parseFloat(order.remaining_balance).toFixed(2)}</p>
+                            </div>
                           </div>
+                        </div>
+                      )}
+
+                      {/* Pick-up Details */}
+                      {order.order_type === 'pickup' && (
+                        <div className='bg-blue-50 border border-blue-200 rounded-xl p-4 mb-4'>
+                          <p className='text-blue-700 text-xs font-bold uppercase tracking-wide mb-1'>🏪 Pick-up Order</p>
+                          <p className='text-blue-800 text-sm font-semibold'>Caffeine Corner, Garcia Hernandez, Bohol</p>
+                          <p className='text-blue-600/70 text-xs mt-1'>No delivery fee. Pay in full upon pick-up.</p>
                         </div>
                       )}
 
@@ -302,7 +292,7 @@ const Orders = () => {
                         <div className='bg-[#FAF6F0] rounded-xl p-3'>
                           <p className='text-gray-400 text-xs mb-1'>Payment Method</p>
                           <p className='text-[#2C1503] text-sm font-semibold'>
-                            {order.payment_method === 'cod'     ? '🏦 Cash on Delivery'
+                            {order.payment_method === 'cod'     ? '🏦 Cash'
                             : order.payment_method === 'gcash'  ? '📱 GCash'
                             : '🏪 Pay at Counter'}
                           </p>
@@ -313,7 +303,7 @@ const Orders = () => {
                             {payStatus.label}
                           </p>
                         </div>
-                        {order.order_type !== 'dine_in' && (
+                        {order.order_type === 'regular' && (
                           <div className='bg-[#FAF6F0] rounded-xl p-3 col-span-2'>
                             <p className='text-gray-400 text-xs mb-1'>Delivery Address</p>
                             <p className='text-[#2C1503] text-sm font-semibold'>{order.address}</p>

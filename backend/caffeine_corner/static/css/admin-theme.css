@@ -55,9 +55,12 @@
   border-color: var(--color-primary-800) !important;
 }
 /* Color everything in the flat header bar, but not floating dropdown
-   panels (account menu, theme switcher) — those stay on their own white
-   popup background regardless of the header color, via Unfold's
-   convention of marking such panels with `.absolute`. */
-.cc-header *:not(.absolute):not(.absolute *) {
+   panels (account menu, theme switcher) or the History/object-tools list —
+   those keep their own white (or dark-mode) background regardless of the
+   header color. Both are marked via Unfold's `.absolute` convention or, for
+   the History action list's Alpine component, `[x-data*="showActions"]` —
+   NOT `.bg-white`, since `.cc-header` itself carries that utility class too
+   and would otherwise exclude its entire subtree (breadcrumbs included). */
+.cc-header *:not(.absolute):not(.absolute *):not([x-data*="showActions"]):not([x-data*="showActions"] *) {
   color: var(--color-primary-50) !important;
 }
