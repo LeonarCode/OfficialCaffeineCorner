@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { getOrders } from '../services/orderService'
+import { useLocation } from 'react-router-dom'
+import { verifyPaymongoPayment } from '../services/orderService.js'
 
 const STATUS_CONFIG = {
   pending:    { label: 'Pending',    color: 'bg-yellow-100 text-yellow-700',  dot: 'bg-yellow-400',  step: 1 },
@@ -26,7 +28,6 @@ const ORDER_TYPE_CONFIG = {
 const STEPS = [
   { key: 'pending',    label: 'Order Placed', icon: '📋' },
   { key: 'confirmed',  label: 'Confirmed',    icon: '✅' },
-  { key: 'processing', label: 'Processing',   icon: '☕' },
   { key: 'delivered',  label: 'Delivered',    icon: '🎉' },
 ]
 
@@ -37,8 +38,26 @@ const Orders = () => {
   const [loading,  setLoading]  = useState(true)
   const [expanded, setExpanded] = useState(null)
   const [filter,   setFilter]   = useState('All')
+  const location = useLocation()
 
-  useEffect(() => { fetchOrders() }, [])
+  // Fetch orders sa unang pag-load
+  useEffect(() => {
+    fetchOrders()
+  }, [])
+
+  // I-verify ang PayMongo payment kung galing sa successful redirect
+  useEffect(() => {
+    const params = new URLSearchParams(location.search)
+    if (params.get('payment') === 'success') {
+      const lastOrderId = localStorage.getItem('pending_paymongo_order_id')
+      if (lastOrderId) {
+        verifyPaymongoPayment(lastOrderId).finally(() => {
+          localStorage.removeItem('pending_paymongo_order_id')
+          fetchOrders()
+        })
+      }
+    }
+  }, [location.search])
 
   const fetchOrders = async () => {
     setLoading(true)

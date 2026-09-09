@@ -154,6 +154,18 @@ SIMPLE_JWT = {
     'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
 }
 
+# Without this, dj_rest_auth's SocialLoginView (GoogleLoginView/FacebookLoginView)
+# defaults to its own DRF Token auth and replies with {"key": "..."} instead of
+# {"access": ..., "refresh": ...} — the frontend then stores `undefined` for both
+# tokens, so it looks like Google sign-in "succeeds" but every request after that
+# 401s and the user gets bounced back out. USE_JWT makes it issue SimpleJWT tokens
+# (same kind the rest of the app already uses) in the response body; HTTPONLY is
+# off because the frontend keeps tokens in localStorage, not cookies.
+REST_AUTH = {
+    'USE_JWT': True,
+    'JWT_AUTH_HTTPONLY': False,
+}
+
 AUTHENTICATION_BACKENDS = [
     'django.contrib.auth.backends.ModelBackend',
     'allauth.account.auth_backends.AuthenticationBackend',
@@ -164,6 +176,7 @@ ACCOUNT_USERNAME_REQUIRED = False
 ACCOUNT_AUTHENTICATION_METHOD = 'email'
 ACCOUNT_EMAIL_VERIFICATION = 'none'
 
+SOCIALACCOUNT_AUTO_SIGNUP = True
 # Gawin itong ganito
 SOCIALACCOUNT_PROVIDERS = {
     'google': {
@@ -176,7 +189,7 @@ SOCIALACCOUNT_PROVIDERS = {
     }
 }
 SITE_ID = 2
-EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+EMAIL_BACKEND = 'authentication.email_backend.UnverifiedSSLEmailBackend'
 EMAIL_HOST = 'smtp.gmail.com'
 EMAIL_PORT = 587
 EMAIL_USE_TLS = True

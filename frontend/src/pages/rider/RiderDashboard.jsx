@@ -96,6 +96,10 @@ const RiderDashboard = () => {
                   </div>
                   <span className='text-[#6f4e37] font-bold text-sm'>₱{parseFloat(order.total_price).toFixed(2)}</span>
                 </div>
+
+                {/* Customer Name — dagdag */}
+                <p className='text-[#2C1503] text-sm font-semibold mb-1'>{order.customer_name}</p>
+
                 <p className='text-gray-500 text-xs mb-1'>📍 {order.address}</p>
                 <p className='text-gray-400 text-xs'>📞 {order.phone}</p>
                 {order.zone_name && (

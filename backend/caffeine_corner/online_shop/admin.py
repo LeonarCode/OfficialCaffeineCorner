@@ -2,6 +2,7 @@ from django.contrib import admin
 
 # Register your models here.
 from django.contrib import admin
+from django import forms
 from unfold.admin import ModelAdmin, TabularInline, format_html, mark_safe
 from .models import ActivityLog, Category, Product, Variant, Rating, Order, OrderItem, LoyaltyPoint, Notification, TownZone
 from inventory.models import Ingredient
@@ -28,29 +29,56 @@ def _badge(label, variant='base'):
     )
 
 
+# NOTE: these loop + call .save() per order instead of queryset.update().
+# .update() runs straight in SQL and skips Model.save(), which means it
+# never fires pre_save/post_save — so notifications, activity logs, and
+# (critically) the ingredient-stock restore-on-cancel signal would silently
+# never run. Order counts here are small (admin selections), so the extra
+# per-row save is cheap and correctness matters more.
+
 @admin.action(description='✅ Mark as Confirmed')
 def mark_confirmed(modeladmin, request, queryset):
-    updated = queryset.exclude(status='cancelled').update(status='confirmed')
+    updated = 0
+    for order in queryset.exclude(status='cancelled'):
+        order.status = 'confirmed'
+        order.save()
+        updated += 1
     modeladmin.message_user(request, f'{updated} order(s) marked as Confirmed.')
 
 @admin.action(description='🎉 Mark as Delivered')
 def mark_delivered(modeladmin, request, queryset):
-    updated = queryset.exclude(status='cancelled').update(status='delivered')
+    updated = 0
+    for order in queryset.exclude(status='cancelled'):
+        order.status = 'delivered'
+        order.save()
+        updated += 1
     modeladmin.message_user(request, f'{updated} order(s) marked as Delivered.')
 
 @admin.action(description='❌ Mark as Cancelled')
 def mark_cancelled(modeladmin, request, queryset):
-    updated = queryset.update(status='cancelled')
+    updated = 0
+    for order in queryset:
+        order.status = 'cancelled'
+        order.save()
+        updated += 1
     modeladmin.message_user(request, f'{updated} order(s) marked as Cancelled.')
 
 @admin.action(description='💰 Mark Payment as Paid')
 def mark_payment_paid(modeladmin, request, queryset):
-    updated = queryset.update(payment_status='paid')
+    updated = 0
+    for order in queryset:
+        order.payment_status = 'paid'
+        order.save()
+        updated += 1
     modeladmin.message_user(request, f'{updated} order(s) marked as Paid.')
 
 @admin.action(description='⏳ Mark Payment as Unpaid')
 def mark_payment_unpaid(modeladmin, request, queryset):
-    updated = queryset.update(payment_status='unpaid')
+    updated = 0
+    for order in queryset:
+        order.payment_status = 'unpaid'
+        order.save()
+        updated += 1
     modeladmin.message_user(request, f'{updated} order(s) marked as Unpaid.')
 
 
@@ -134,7 +162,7 @@ class ProductAdmin(ModelAdmin):
 @admin.register(Order)
 class OrderAdmin(ModelAdmin):
     list_before_template = 'admin/order_change_list.html'
-    list_display    = ['id', 'email', 'phone', 'order_type', 'show_status', 'payment_method', 'show_payment_status', 'total_price', 'created_at', 'print_receipt_link']
+    list_display    = ['id', 'email', 'phone', 'order_type', 'show_status', 'payment_method', 'show_payment_status', 'total_price', 'created_at', 'show_map_link', 'print_receipt_link']  # ← dagdag show_map_link
     list_filter     = ['status', 'payment_method', 'payment_status', 'order_type']
     search_fields   = ['email', 'phone', 'id']
     inlines         = [OrderItemInline]
@@ -158,6 +186,7 @@ class OrderAdmin(ModelAdmin):
         'gcash_ref', 'paymongo_id', 'delivery_proof_photo', 'delivered_at',
         'rider_notes', 'points_earned', 'points_used', 'discount',
         'downpayment_amount', 'remaining_balance',
+        'delivery_latitude', 'delivery_longitude',  # ← dagdag para makita sa detail view
     ]
     ADD_FIELDS = [f.name for f in Order._meta.fields if f.name != 'id']
     ADD_READONLY_FIELDS = ['created_at', 'updated_at']
@@ -201,6 +230,19 @@ class OrderAdmin(ModelAdmin):
         return _badge(obj.get_payment_status_display(), self.PAYMENT_COLORS.get(obj.payment_status, 'base'))
     show_payment_status.short_description = 'Payment Status'
     show_payment_status.admin_order_field = 'payment_status'
+
+    def show_map_link(self, obj):
+        if obj.delivery_latitude and obj.delivery_longitude:
+            url = f'https://www.google.com/maps?q={obj.delivery_latitude},{obj.delivery_longitude}'
+            return format_html(
+                '<a href="{}" target="_blank" '
+                'class="font-medium inline-flex items-center gap-1 rounded-default whitespace-nowrap '
+                'px-2.5 py-1 text-[11px] border border-base-200 bg-primary-600 border-transparent '
+                'text-white hover:bg-primary-600/80">📍 View Map</a>',
+                url
+            )
+        return format_html('<span class="text-base-400 text-[11px]">No pin</span>')
+    show_map_link.short_description = 'Location'
 
     def print_receipt_link(self, obj):
         return format_html(
@@ -264,8 +306,28 @@ class ActivityLogAdmin(ModelAdmin):
         return mark_safe('<span class="text-base-400 dark:text-base-500 text-xs">System</span>')
     show_user.short_description = 'User'
 
+class TownZoneAdminForm(forms.ModelForm):
+    class Meta:
+        model = TownZone
+        fields = '__all__'
+
+    class Media:
+        css = {'all': ('vendor/leaflet/leaflet.css',)}
+        js  = ('vendor/leaflet/leaflet.js', 'js/townzone-map.js')
+
+
 @admin.register(TownZone)
 class TownZoneAdmin(ModelAdmin):
+    form          = TownZoneAdminForm
     list_display  = ['name', 'delivery_fee', 'estimated_time', 'is_active']
     list_editable = ['delivery_fee', 'is_active']
     search_fields = ['name']
+    fieldsets = (
+        (None, {
+            'fields': ('name', 'delivery_fee', 'estimated_time', 'is_active')
+        }),
+        ('Map Center (para sa auto-pan sa checkout)', {
+            'fields': ('center_latitude', 'center_longitude'),
+            'description': 'I-click ang mapa sa ibaba (o i-drag ang pin) para i-set ang center — awtomatikong mapupunan ang latitude/longitude. Pwede rin direktang i-type kung mayroon nang eksaktong coordinates.'
+        }),
+    )

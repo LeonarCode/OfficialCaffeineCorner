@@ -50,8 +50,8 @@ class ProductSerializer(serializers.ModelSerializer):
 
 class TownZoneSerializer(serializers.ModelSerializer):
     class Meta:
-        model = TownZone
-        fields = ['id', 'name', 'delivery_fee', 'estimated_time']  # tanggalin min_order_amount
+        model  = TownZone
+        fields = ['id', 'name', 'delivery_fee', 'estimated_time', 'center_latitude', 'center_longitude']
 
 
 class MarkDeliveredSerializer(serializers.Serializer):
@@ -87,7 +87,7 @@ class OrderSerializer(serializers.ModelSerializer):
             'zone', 'zone_name', 'delivery_fee',
             'gcash_ref', 'discount', 'points_earned', 'points_used',
             'items', 'subtotal', 'total_price', 'item_count',
-            'created_at', 'updated_at',
+            'created_at', 'updated_at', 'delivery_latitude', 'delivery_longitude'
         ]
         read_only_fields = ['status', 'payment_status', 'points_earned', 'created_at', 'updated_at']
 
@@ -108,6 +108,8 @@ class CreateOrderSerializer(serializers.Serializer):
     pax            = serializers.IntegerField(required=False, default=0)
     table_number   = serializers.CharField(required=False, allow_blank=True, default='')
     zone_id        = serializers.IntegerField(required=False, allow_null=True)
+    delivery_latitude  = serializers.DecimalField(max_digits=10, decimal_places=7, required=False, allow_null=True)
+    delivery_longitude = serializers.DecimalField(max_digits=10, decimal_places=7, required=False, allow_null=True)
 
     def validate_phone(self, value):
         # Alisin ang spaces, dashes
@@ -136,20 +138,27 @@ class CartItemSerializer(serializers.ModelSerializer):
 
 
 class RiderOrderSerializer(serializers.ModelSerializer):
-    items       = OrderItemSerializer(many=True, read_only=True)
-    total_price = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
-    zone_name   = serializers.CharField(source='zone.name', read_only=True, default=None)
+    items          = OrderItemSerializer(many=True, read_only=True)
+    total_price    = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
+    zone_name      = serializers.CharField(source='zone.name', read_only=True, default=None)
+    customer_name  = serializers.SerializerMethodField()  # ← dagdag
 
     class Meta:
         model  = Order
         fields = [
-            'id', 'email', 'phone', 'address', 'notes',
+            'id', 'email', 'phone', 'address', 'notes', 'customer_name',  # ← dagdag customer_name
             'status', 'payment_method', 'payment_status',
             'order_type', 'zone_name', 'delivery_fee',
             'items', 'total_price',
             'delivery_proof_photo', 'delivered_at', 'rider_notes',
+            'delivery_latitude', 'delivery_longitude',
             'created_at',
         ]
+
+    def get_customer_name(self, obj):
+        if obj.user and obj.user.username:
+            return obj.user.username
+        return obj.email.split('@')[0]  # fallback — gamitin ang email prefix kung walang username
 
 
 class MarkDeliveredSerializer(serializers.Serializer):

@@ -124,6 +124,7 @@ class StockMovement(models.Model):
         ("spoilage",   "Spoilage / Waste"),
         ("return",     "Return to Supplier"),
         ("transfer",   "Transfer"),
+        ("reversal",   "Reversal — Cancelled Order / Removed Item"),
     )
 
     inventory       = models.ForeignKey(
@@ -164,15 +165,22 @@ class StockMovement(models.Model):
         ]
 
     def save(self, *args, **kwargs):
-        STOCK_IN  = {"purchase", "return", "transfer"}
+        # This is the ONLY place that should ever touch quantity_on_hand for
+        # a movement — callers must not also pre-adjust it themselves before
+        # creating a StockMovement, or the change gets applied twice.
+        STOCK_IN  = {"purchase", "return", "transfer", "reversal"}
         STOCK_OUT = {"usage", "spoilage", "adjustment"}
         if self.movement_type in STOCK_IN:
             self.quantity_change = self.quantity
         else:
             self.quantity_change = -self.quantity
         super().save(*args, **kwargs)
-        self.inventory.quantity_on_hand = (
-            models.F("quantity_on_hand") + self.quantity_change
+        # Floor at 0 at the DB level (F-expression, race-safe) — physical
+        # stock can't go negative even if usage exceeds what's on hand.
+        from django.db.models.functions import Greatest
+        self.inventory.quantity_on_hand = Greatest(
+            models.F("quantity_on_hand") + self.quantity_change,
+            Decimal("0"),
         )
         self.inventory.save(update_fields=["quantity_on_hand", "last_updated"])
 

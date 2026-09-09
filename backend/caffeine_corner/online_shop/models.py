@@ -134,6 +134,8 @@ class TownZone(models.Model):
     delivery_fee   = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     is_active      = models.BooleanField(default=True, help_text="Uncheck para hindi pa muna ma-deliver dito")
     estimated_time = models.CharField(max_length=50, blank=True, help_text="e.g. '30-45 mins'")
+    center_latitude  = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True, help_text="Approximate center ng zone para sa map auto-pan")
+    center_longitude = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True)
     # min_order_amount — TINANGGAL
 
     class Meta:
@@ -191,6 +193,8 @@ class Order(models.Model):
                        related_name='orders',
                        help_text='Delivery zone — regular at bulk orders lang'
                    )
+    delivery_latitude  = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True)
+    delivery_longitude = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True)
     delivery_fee = models.DecimalField(max_digits=10, decimal_places=2, default=0)
 
     # Status

@@ -105,6 +105,24 @@ class GoogleLoginView(SocialLoginView):
     callback_url = 'http://localhost:5173'
     client_class = OAuth2Client
 
+    def post(self, request, *args, **kwargs):
+        response = super().post(request, *args, **kwargs)
+
+        # Kunin ang user na kaka-login lang
+        user = getattr(self, 'user', None)
+
+        if user:
+            social_account = user.socialaccount_set.filter(provider='google').first()
+            if social_account:
+                extra_data = social_account.extra_data
+                full_name  = extra_data.get('name', '')
+
+                # I-set ang username sa full name galing Google
+                if full_name and user.username != full_name:
+                    user.username = full_name
+                    user.save(update_fields=['username'])
+
+        return response
 
 class FacebookLoginView(SocialLoginView):
     adapter_class = FacebookOAuth2Adapter

@@ -153,6 +153,67 @@ class CreatePayMongoSourceView(APIView):
             'source_id':    source_id,
             'checkout_url': checkout_url,
         }, status=200)
+
+class VerifyPaymentStatusView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        order_id = request.data.get('order_id')
+        if not order_id:
+            return Response({'error': 'order_id is required.'}, status=400)
+
+        order = get_object_or_404(Order, id=order_id)
+
+        if not order.paymongo_id:
+            return Response({'error': 'No PayMongo source linked to this order.'}, status=400)
+
+        if order.payment_status in ['paid', 'downpayment']:
+            # Naverify na dati — huwag na ulit i-charge
+            return Response({'payment_status': order.payment_status}, status=200)
+
+        res = requests.get(
+            f"https://api.paymongo.com/v1/sources/{order.paymongo_id}",
+            headers=_get_paymongo_headers(),
+        )
+        data = res.json()
+
+        if res.status_code != 200:
+            return Response({'error': data}, status=res.status_code)
+
+        source_status = data['data']['attributes']['status']
+
+        if source_status == 'chargeable':
+            payment_res = requests.post(
+                "https://api.paymongo.com/v1/payments",
+                headers=_get_paymongo_headers(),
+                json={
+                    "data": {
+                        "attributes": {
+                            "amount": data['data']['attributes']['amount'],
+                            "currency": "PHP",
+                            "source": {"id": order.paymongo_id, "type": "source"},
+                            "description": f"Caffeine Corner Order #{order.id}",
+                        }
+                    }
+                },
+            )
+            if payment_res.status_code in [200, 201]:
+                # Kung may downpayment amount, "downpayment" ang status, hindi "paid"
+                order.payment_status = 'downpayment' if order.downpayment_amount else 'paid'
+                order.status         = 'confirmed'
+                order.save()
+
+                if order.user:
+                    CartItem.objects.filter(user=order.user).delete()
+                    loyalty, _ = LoyaltyPoint.objects.get_or_create(user=order.user)
+                    earned = loyalty.earn(order.total_price - order.discount)
+                    order.points_earned = earned
+                    order.save(update_fields=['points_earned'])
+
+        return Response({
+            'payment_status': order.payment_status,
+            'source_status':  source_status,
+        }, status=200)
     
 
 # ─── Webhook ──────────────────────────────────────────────────────────────────
@@ -411,6 +472,8 @@ class OrderCreateView(APIView):
             table_number=data.get('table_number', ''),
             zone=zone,
             delivery_fee=delivery_fee,
+            delivery_latitude=data.get('delivery_latitude'),    # ← dagdag
+            delivery_longitude=data.get('delivery_longitude'),
         )
 
         subtotal = 0
@@ -427,8 +490,16 @@ class OrderCreateView(APIView):
             subtotal += price * quantity
 
         # ─── Downpayment — regular lang, kapag umabot ng ₱1000 (kasama delivery fee) ──
-        grand_total = subtotal + delivery_fee
-        if order_type == 'regular' and grand_total >= self.DOWNPAYMENT_THRESHOLD:
+        grand_total           = subtotal + delivery_fee
+        downpayment_required  = order_type == 'regular' and grand_total >= self.DOWNPAYMENT_THRESHOLD
+
+        if downpayment_required and data['payment_method'] != 'gcash':
+            order.delete()
+            return Response({
+                'error': f'Orders reaching ₱{self.DOWNPAYMENT_THRESHOLD} require GCash payment for the 30% downpayment. Cash on Delivery is not available for this order.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        if downpayment_required:
             downpayment               = round(grand_total * self.DOWNPAYMENT_RATE, 2)
             order.downpayment_amount  = downpayment
             order.remaining_balance   = grand_total - downpayment
@@ -441,8 +512,17 @@ class OrderCreateView(APIView):
 
         order.save()
 
-        if user and order_type in ['regular', 'pickup']:
-            CartItem.objects.filter(user=user).delete()
+        # ─── Loyalty at cart clear ─────────────────────────────
+        # Kung GCash, i-defer ito hanggang ma-verify ang payment (VerifyPaymentStatusView)
+        if data['payment_method'] != 'gcash':
+            if user:
+                loyalty, _          = LoyaltyPoint.objects.get_or_create(user=user)
+                earned               = loyalty.earn(subtotal - discount)
+                order.points_earned  = earned
+                order.save(update_fields=['points_earned'])
+
+            if user and order_type in ['regular', 'pickup']:
+                CartItem.objects.filter(user=user).delete()
 
         return Response(OrderSerializer(order).data, status=status.HTTP_201_CREATED)
 

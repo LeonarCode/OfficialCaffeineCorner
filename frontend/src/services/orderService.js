@@ -14,3 +14,9 @@ export const getLoyaltyPoints = () =>
 
 export const getZones = () =>
     api.get('/api/zones/')
+
+export const createPayMongoSource = (data) =>
+    api.post('/api/paymongo/create-source/', data)
+
+export const verifyPaymongoPayment = (orderId) =>
+    api.post('/api/paymongo/verify/', { order_id: orderId })

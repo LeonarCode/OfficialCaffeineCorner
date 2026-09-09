@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { createOrder, getLoyaltyPoints } from '../services/orderService.js'
+import { createOrder, getLoyaltyPoints, createPayMongoSource } from '../services/orderService.js'
 import { getCart } from '../services/cartService.js'
 import { getMe } from '../services/authService.js'
 import { getZones } from '../services/orderService.js'
 import { useAuth } from '../context/AuthContext'
+import LocationPicker from '../components/LocationPicker.jsx'
 
 const STEPS = ['Order Type', 'Delivery', 'Payment']
 const DOWNPAYMENT_RATE = 0.30
@@ -28,6 +29,7 @@ const Checkout = () => {
   const [zones,          setZones]          = useState([])
   const [selectedZone,   setSelectedZone]   = useState(null)
   const [loadingZones,   setLoadingZones]   = useState(false)
+  const [deliveryCoords, setDeliveryCoords] = useState(null)
   const { isAuthenticated }                 = useAuth()
   const [form, setForm] = useState({ email: '', phone: '', address: '', notes: '' })
 
@@ -71,7 +73,8 @@ const Checkout = () => {
   useEffect(() => {
     if (!needsDelivery) {
       setSelectedZone(null)
-      setErrors(p => ({ ...p, zone: '', address: '' }))
+      setDeliveryCoords(null)
+      setErrors(p => ({ ...p, zone: '', address: '', location: '' }))
     }
   }, [orderType])
 
@@ -102,6 +105,13 @@ const Checkout = () => {
   const downpayment      = downpaymentRate > 0 ? total * downpaymentRate : 0
   const remainingBalance = downpaymentRate > 0 ? total - downpayment : 0
 
+  // I-force ang GCash kapag may downpayment required — COD hindi pwede sa online-first payment
+  useEffect(() => {
+    if (downpaymentRate > 0 && paymentMethod !== 'gcash') {
+      setPaymentMethod('gcash')
+    }
+  }, [downpaymentRate])
+
   const validate = () => {
     const e = {}
     if (!form.email) e.email = 'Email is required'
@@ -112,6 +122,7 @@ const Checkout = () => {
     }
     if (needsDelivery && !form.address) e.address = 'Delivery address is required'
     if (needsDelivery && !selectedZone) e.zone = 'Please select your delivery zone'
+    if (needsDelivery && !deliveryCoords) e.location = 'Please pin your delivery location on the map'
 
     setErrors(e)
     return Object.keys(e).length === 0
@@ -130,6 +141,8 @@ const Checkout = () => {
         order_type:     orderType,
         points_to_use:  usePoints ? pointsToUse : 0,
         zone_id:        needsDelivery ? (selectedZone?.id || null) : null,
+        delivery_latitude:  needsDelivery && deliveryCoords ? parseFloat(deliveryCoords[0].toFixed(7)) : null,
+        delivery_longitude: needsDelivery && deliveryCoords ? parseFloat(deliveryCoords[1].toFixed(7)) : null,
         items: buyNowData?.product
           ? [{ product: buyNowData.product, quantity }]
           : cartItems.map(item => ({
@@ -140,6 +153,23 @@ const Checkout = () => {
       }
       const res = await createOrder(data)
       setOrderData(res.data)
+
+      // ─── Kung GCash, i-redirect papunta sa PayMongo ───
+      if (paymentMethod === 'gcash') {
+        const amountToCharge   = downpaymentRate > 0 ? downpayment : total
+        const amountInCentavos = Math.round(amountToCharge * 100)
+
+        const paymongoRes = await createPayMongoSource({
+          amount: amountInCentavos,
+          order_id: res.data.id,
+          success_url: `${window.location.origin}/orders?payment=success`,
+          failed_url: `${window.location.origin}/checkout?payment=failed`,
+        })
+
+        localStorage.setItem('pending_paymongo_order_id', res.data.id)
+        window.open(paymongoRes.data.checkout_url, '_blank')
+      }
+
       setShowSuccess(true)
     } catch (err) {
       setErrors(prev => ({ ...prev, submit: err.response?.data?.error || 'Failed to place order.' }))
@@ -150,7 +180,7 @@ const Checkout = () => {
   }
 
   const isFormValid = form.email && form.phone && validatePhone(form.phone) &&
-    (!needsDelivery || (form.address && selectedZone))
+    (!needsDelivery || (form.address && selectedZone && deliveryCoords))
 
   return (
     <div className='flex flex-col min-h-screen bg-[#FAF6F0]'>
@@ -233,6 +263,15 @@ const Checkout = () => {
                 <span className='text-gray-500 text-sm font-semibold'>Total</span>
                 <span className='text-[#2C1503] text-xl font-bold'>₱{total.toFixed(2)}</span>
               </div>
+
+              {paymentMethod === 'gcash' && (
+                <div className='bg-blue-50 border border-blue-200 rounded-xl px-3 py-2'>
+                  <p className='text-blue-700 text-xs font-semibold'>
+                    📱 A new tab has opened for your GCash payment. Please complete it to confirm your order.
+                  </p>
+                </div>
+              )}
+
               {downpaymentRate > 0 && (
                 <div className='bg-amber-50 border border-amber-200 rounded-xl px-3 py-2'>
                   <p className='text-amber-700 text-xs font-semibold'>
@@ -348,7 +387,7 @@ const Checkout = () => {
                 {orderType === 'regular' && (
                   <div className='flex flex-col gap-2 bg-blue-50 border border-blue-200 rounded-xl p-4'>
                     <p className='text-blue-700 text-xs font-semibold'>
-                      ℹ️ Orders reaching ₱1,000 (including delivery fee) require a 30% downpayment to confirm. Remaining balance upon delivery.
+                      ℹ️ Orders reaching ₱1,000 (including delivery fee) require a 30% GCash downpayment to confirm. Remaining balance upon delivery.
                     </p>
                   </div>
                 )}
@@ -380,7 +419,7 @@ const Checkout = () => {
               <div className='flex items-center gap-3'>
                 <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold transition
                   ${currentStep >= 1 ? 'bg-[#3D1F00] text-[#C4A882]' : 'bg-gray-100 text-gray-400'}`}>
-                  {form.email && form.phone && (!needsDelivery || (form.address && selectedZone)) ? '✓' : '2'}
+                  {form.email && form.phone && (!needsDelivery || (form.address && selectedZone && deliveryCoords)) ? '✓' : '2'}
                 </div>
                 <h2 className='text-[#2C1503] font-semibold text-sm'>
                   {needsDelivery ? 'Contact & Delivery' : 'Contact Info'}
@@ -485,20 +524,27 @@ const Checkout = () => {
                 </div>
 
                 {needsDelivery ? (
-                  <div>
-                    <label className='text-[#2C1503] text-xs font-semibold uppercase mb-1.5 block'>
-                      Delivery Address <span className='text-red-400'>*</span>
-                    </label>
-                    <textarea
-                      placeholder='House No., Street, Barangay'
-                      value={form.address}
-                      onChange={e => { setForm({ ...form, address: e.target.value }); setErrors(p => ({ ...p, address: '' })) }}
-                      rows={3}
-                      className={`w-full border rounded-xl px-4 py-3 text-sm text-gray-600 outline-none transition bg-[#FAF6F0] resize-none
-                        ${errors.address ? 'border-red-400' : 'border-gray-200 focus:border-[#C4A882]'}`}
-                    />
-                    {errors.address && <p className='text-red-400 text-xs mt-1'>{errors.address}</p>}
-                  </div>
+                  <>
+                    <div>
+                      <label className='text-[#2C1503] text-xs font-semibold uppercase mb-1.5 block'>
+                        Delivery Address <span className='text-red-400'>*</span>
+                      </label>
+                      <textarea
+                        placeholder='House No., Street, Barangay'
+                        value={form.address}
+                        onChange={e => { setForm({ ...form, address: e.target.value }); setErrors(p => ({ ...p, address: '' })) }}
+                        rows={3}
+                        className={`w-full border rounded-xl px-4 py-3 text-sm text-gray-600 outline-none transition bg-[#FAF6F0] resize-none
+                          ${errors.address ? 'border-red-400' : 'border-gray-200 focus:border-[#C4A882]'}`}
+                      />
+                      {errors.address && <p className='text-red-400 text-xs mt-1'>{errors.address}</p>}
+                    </div>
+
+                    <div>
+                      <LocationPicker value={deliveryCoords} onChange={setDeliveryCoords} zone={selectedZone} />
+                      {errors.location && <p className='text-red-400 text-xs mt-1'>{errors.location}</p>}
+                    </div>
+                  </>
                 ) : (
                   <div className='bg-[#FAF6F0] rounded-xl p-3 flex items-start gap-2'>
                     <span>🏪</span>
@@ -548,18 +594,30 @@ const Checkout = () => {
 
             {currentStep === 2 && (
               <div className='px-5 pb-5 flex flex-col gap-3'>
-                <label className={`flex items-center gap-4 border rounded-xl px-4 py-4 cursor-pointer transition ${paymentMethod === 'cod' ? 'border-[#C4A882] bg-[#FAF6F0]' : 'border-gray-200'}`}>
-                  <input type='radio' name='payment' value='cod' checked={paymentMethod === 'cod'} onChange={() => setPaymentMethod('cod')} className='accent-[#3D1F00]' />
-                  <span className='text-lg'>🏦</span>
-                  <div>
-                    <p className='text-[#2C1503] text-sm font-semibold'>
-                      {needsDelivery ? 'Cash on Delivery' : 'Cash on Pick-up'}
-                    </p>
-                    <p className='text-gray-400 text-xs'>
-                      {needsDelivery ? 'Pay when your order arrives' : 'Pay when you pick up your order'}
+
+                {downpaymentRate > 0 && (
+                  <div className='bg-blue-50 border border-blue-200 rounded-xl p-3 mb-1'>
+                    <p className='text-blue-700 text-xs font-semibold'>
+                      📱 Orders reaching ₱1,000 require GCash payment for the 30% downpayment. Cash on Delivery is not available for this order.
                     </p>
                   </div>
-                </label>
+                )}
+
+                {downpaymentRate === 0 && (
+                  <label className={`flex items-center gap-4 border rounded-xl px-4 py-4 cursor-pointer transition ${paymentMethod === 'cod' ? 'border-[#C4A882] bg-[#FAF6F0]' : 'border-gray-200'}`}>
+                    <input type='radio' name='payment' value='cod' checked={paymentMethod === 'cod'} onChange={() => setPaymentMethod('cod')} className='accent-[#3D1F00]' />
+                    <span className='text-lg'>🏦</span>
+                    <div>
+                      <p className='text-[#2C1503] text-sm font-semibold'>
+                        {needsDelivery ? 'Cash on Delivery' : 'Cash on Pick-up'}
+                      </p>
+                      <p className='text-gray-400 text-xs'>
+                        {needsDelivery ? 'Pay when your order arrives' : 'Pay when you pick up your order'}
+                      </p>
+                    </div>
+                  </label>
+                )}
+
                 <label className={`flex items-center gap-4 border rounded-xl px-4 py-4 cursor-pointer transition ${paymentMethod === 'gcash' ? 'border-[#C4A882] bg-[#FAF6F0]' : 'border-gray-200'}`}>
                   <input type='radio' name='payment' value='gcash' checked={paymentMethod === 'gcash'} onChange={() => setPaymentMethod('gcash')} className='accent-[#3D1F00]' />
                   <span className='text-lg'>📱</span>

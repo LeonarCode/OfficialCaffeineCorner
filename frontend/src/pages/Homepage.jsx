@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import Card from '../components/Card'
 import { getProducts, getCategories } from '../services/productService'
 import { useAuth } from '../context/AuthContext'
+import TermsModal from '../components/TermsModal'
 
 const Homepage = () => {
   const [products,       setProducts]       = useState([])
@@ -76,7 +77,7 @@ const Homepage = () => {
 
   return (
     <div className='flex flex-col bg-[#FAF6F0] min-h-screen'>
-
+      <TermsModal />
       {/* Hero Section */}
       {!searchQuery && activeCategory === 'All' && (
         <div className='relative bg-[#2C1503] overflow-hidden'>
