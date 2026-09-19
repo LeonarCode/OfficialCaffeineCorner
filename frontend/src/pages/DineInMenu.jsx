@@ -15,9 +15,10 @@ const DineInMenu = () => {
   const [loading,        setLoading]        = useState(true)
   const [cart,           setCart]           = useState([])
   const [showCart,       setShowCart]       = useState(false)
-  const [form,           setForm]           = useState({ email: '', notes: '' })
+  const [form,           setForm]           = useState({ email: '', phone: '', notes: '' })
   const [placing,        setPlacing]        = useState(false)
   const [orderSuccess,   setOrderSuccess]   = useState(null)
+  const [errors,         setErrors]         = useState({})
 
   useEffect(() => {
     if (!tableNumber) { navigate('/home'); return }
@@ -65,12 +66,28 @@ const DineInMenu = () => {
 
   const subtotal = cart.reduce((sum, i) => sum + parseFloat(i.price) * i.qty, 0)
 
+  const validatePhone = (phone) => /^(09\d{9}|\+639\d{9})$/.test(phone.replace(/[\s\-]/g, ''))
+
+  // Phone is optional for dine-in — the customer's already at the table, so
+  // it doesn't carry the "how do we reach them" weight it does for
+  // delivery/pickup (see Checkout.jsx, where it's required). Still format-
+  // checked if they do type one in, same as the backend (CreateOrderSerializer).
+  const isFormValid = form.email && (!form.phone || validatePhone(form.phone)) && cart.length > 0
+
   const handlePlaceOrder = async () => {
-    if (!form.email || cart.length === 0) return
+    const newErrors = {}
+    if (form.phone && !validatePhone(form.phone)) newErrors.phone = 'Enter a valid Philippine mobile number (e.g. 09171234567)'
+    if (Object.keys(newErrors).length > 0 || !form.email || cart.length === 0) {
+      setErrors(newErrors)
+      return
+    }
+
     setPlacing(true)
+    setErrors({})
     try {
       const res = await createOrder({
         email:          form.email,
+        phone:          form.phone.replace(/[\s\-]/g, ''),
         address:        `Table ${tableNumber}`,
         notes:          form.notes,
         payment_method: 'counter',
@@ -81,6 +98,9 @@ const DineInMenu = () => {
       setOrderSuccess(res.data)
       setCart([])
     } catch (err) {
+      const data = err.response?.data
+      const message = data?.phone?.[0] || data?.email?.[0] || data?.error || 'Failed to place order. Please try again.'
+      setErrors({ submit: message })
       console.error(err)
     } finally {
       setPlacing(false)
@@ -237,6 +257,20 @@ const DineInMenu = () => {
                   onChange={e => setForm(prev => ({ ...prev, email: e.target.value }))}
                   className='w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-[#C4A882] mb-2'
                 />
+                {/* Phone input — optional for dine-in (see validate() in
+                    CreateOrderSerializer), unlike regular/pickup checkout */}
+                <input
+                  type='tel'
+                  placeholder='Phone number (optional)'
+                  value={form.phone}
+                  onChange={e => {
+                    setForm(prev => ({ ...prev, phone: e.target.value }))
+                    setErrors(prev => ({ ...prev, phone: '' }))
+                  }}
+                  className={`w-full border rounded-xl px-4 py-2.5 text-sm outline-none mb-1
+                    ${errors.phone ? 'border-red-400' : 'border-gray-200 focus:border-[#C4A882]'}`}
+                />
+                {errors.phone && <p className='text-red-400 text-xs mb-2'>{errors.phone}</p>}
                 <textarea
                   placeholder='Special instructions... (optional)'
                   value={form.notes}
@@ -249,9 +283,12 @@ const DineInMenu = () => {
                   <span className='text-[#2C1503] font-bold text-lg'>₱{subtotal.toFixed(2)}</span>
                 </div>
                 <p className='text-gray-400 text-xs mb-3 text-center'>💳 Pay at the counter after ordering</p>
+                {errors.submit && (
+                  <p className='text-red-400 text-xs text-center mb-2'>{errors.submit}</p>
+                )}
                 <button
                   onClick={handlePlaceOrder}
-                  disabled={placing || !form.email}
+                  disabled={placing || !isFormValid}
                   className='w-full bg-[#C4A882] hover:bg-[#b8976e] disabled:opacity-50 text-[#2C1503] font-bold py-3 rounded-xl text-sm transition'
                 >
                   {placing ? 'Placing Order...' : '→ PLACE ORDER'}

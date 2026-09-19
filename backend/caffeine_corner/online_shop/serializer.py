@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Category, Product, Variant, Rating, Order, OrderItem, CartItem, LoyaltyPoint, TownZone
+from .models import Category, Product, Variant, Rating, Order, OrderItem, CartItem, LoyaltyPoint, TownZone, VALID_TABLE_NUMBERS
 import re
 
 
@@ -94,7 +94,14 @@ class OrderSerializer(serializers.ModelSerializer):
 
 class CreateOrderSerializer(serializers.Serializer):
     email          = serializers.EmailField()
-    phone          = serializers.CharField(max_length=15)  # ← dagdag
+    # Required for regular (delivery) and pickup orders — enforced below in
+    # validate(), since that's the only place order_type is known too.
+    # Optional for dine_in: the customer is already physically at the
+    # counter/table, so a phone number doesn't carry the same "how do we
+    # reach them" weight it does for delivery/pickup. allow_blank so it can
+    # be left out entirely; still runs through validate_phone's format
+    # check if they do type one in, blank or not.
+    phone          = serializers.CharField(max_length=15, required=False, allow_blank=True, default='')
     address        = serializers.CharField(required=False, allow_blank=True, default='')
     notes          = serializers.CharField(required=False, allow_blank=True)
     payment_method = serializers.ChoiceField(choices=['cod', 'gcash', 'counter'])
@@ -112,6 +119,14 @@ class CreateOrderSerializer(serializers.Serializer):
     delivery_longitude = serializers.DecimalField(max_digits=10, decimal_places=7, required=False, allow_null=True)
 
     def validate_phone(self, value):
+        # Blank is allowed through here regardless of order_type — DRF calls
+        # validate_phone() even for a blank value (allow_blank doesn't skip
+        # it), and whether blank is actually OK depends on order_type, which
+        # isn't available yet at this per-field stage. That decision is
+        # validate()'s job below, once every field's cleaned value is in.
+        if not value:
+            return value
+
         # Alisin ang spaces, dashes
         cleaned = re.sub(r'[\s\-]', '', value)
 
@@ -122,6 +137,28 @@ class CreateOrderSerializer(serializers.Serializer):
                 'Please enter a valid Philippine mobile number (e.g. 09171234567).'
             )
         return cleaned
+
+    def validate(self, attrs):
+        order_type = attrs.get('order_type', 'regular')
+
+        # Dine-in customers are already physically at the table/counter, so
+        # phone isn't required there — but delivery (regular) and pickup
+        # orders still strictly need it (it's the main way to reach that
+        # customer if something's off with the order).
+        if order_type != 'dine_in' and not attrs.get('phone'):
+            raise serializers.ValidationError({'phone': 'Phone number is required for this order type.'})
+
+        # The phone exception above only makes sense because a dine-in order
+        # is tied to a real, physical table — DineInMenu always sends one
+        # (read straight from the QR-scanned URL, see frontend DineInMenu.jsx).
+        # Without this check, order_type is otherwise just a client-supplied
+        # field: anyone calling the API directly could set order_type to
+        # dine_in purely to skip the phone requirement above, landing a
+        # completely anonymous order tied to no table and no contact info.
+        if order_type == 'dine_in' and attrs.get('table_number') not in VALID_TABLE_NUMBERS:
+            raise serializers.ValidationError({'table_number': 'A valid table number is required for dine-in orders.'})
+
+        return attrs
 
 
 class CartItemSerializer(serializers.ModelSerializer):

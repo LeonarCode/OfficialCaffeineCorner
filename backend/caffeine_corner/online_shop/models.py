@@ -6,6 +6,12 @@ from django.conf import settings
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.forms import ValidationError
 
+# The shop's physical dine-in tables (not DB-backed — there are only 5,
+# fixed, matching the printed QR codes). Single source of truth for the QR
+# generator (views.dine_in_landing / views.table_qr_page) and for
+# CreateOrderSerializer's dine-in validation, so they can't drift apart.
+VALID_TABLE_NUMBERS = {'1', '2', '3', '4', '5'}
+
 # Products
 class Category(models.Model):
     name = models.CharField(max_length=100, unique=True)

@@ -19,15 +19,22 @@ from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
 from rest_framework_simplejwt.views import TokenRefreshView
-from inventory.views import SalesReportView, mark_notification_read, sales_report_view, sales_report_document_view, export_orders, auto_generate_purchase_orders
-from online_shop.views import dine_in_landing, generate_table_qr, print_order_receipt, table_qr_page
+from inventory.views import mark_notification_read, notif_unread_count, sales_report_view, sales_report_data, sales_report_document_view, export_orders, auto_generate_purchase_orders, htmx_adjust_stock
+from online_shop.views import dine_in_landing, generate_table_qr, print_order_receipt, table_qr_page, htmx_set_order_status, htmx_set_payment_status, htmx_set_townzone_center, get_item_price
 
 urlpatterns = [
     path('admin/sales-report/', sales_report_view, name='sales-report'),
+    path('admin/sales-report/data/', sales_report_data, name='sales-report-data'),
     path('admin/sales-report/document/', sales_report_document_view, name='sales-report-document'),
     path('admin/mark-notification-read/<int:notification_id>/', mark_notification_read, name='mark-notification-read'),
+    path('admin/notifications/unread-count/', notif_unread_count, name='notif-unread-count'),
     path('admin/auto-generate-po/', auto_generate_purchase_orders, name='auto-generate-po'),
+    path('admin/inventory/<int:inventory_id>/adjust/', htmx_adjust_stock, name='htmx-adjust-stock'),
     path('admin/orders/<int:order_id>/receipt/', print_order_receipt, name='print-receipt'),
+    path('admin/orders/<int:order_id>/set-status/', htmx_set_order_status, name='htmx-order-status'),
+    path('admin/orders/<int:order_id>/set-payment/', htmx_set_payment_status, name='htmx-order-payment'),
+    path('admin/townzones/<int:zone_id>/set-center/', htmx_set_townzone_center, name='htmx-townzone-center'),
+    path('admin/products/<int:product_id>/price/', get_item_price, name='order-item-price'),
     path('admin/export-orders/', export_orders, name='export-orders'),
     path('admin/table-qr/', table_qr_page, name='table-qr-page'),                          # ← page
     path('admin/table-qr/<str:table_number>/', generate_table_qr, name='table-qr'),        # ← download
@@ -36,5 +43,4 @@ urlpatterns = [
     path('api/', include('online_shop.urls')),
     path('api/auth/', include('authentication.urls')),
     path('api/auth/token/refresh/', TokenRefreshView.as_view(), name='token-refresh'),
-    path('api/reports/sales/', SalesReportView.as_view(), name='sales-report-api'),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

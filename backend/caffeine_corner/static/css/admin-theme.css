@@ -24,6 +24,16 @@
   color: var(--color-primary-50) !important;
 }
 
+/* Brand wordmark ("CAFFIENE CORNER") — same serif as the customer-facing
+   site (see frontend/index.html's Playfair Display import), loaded above
+   in UNFOLD["STYLES"]. Scoped to .text-important specifically so it
+   doesn't also hit the site_subheader line right under it. */
+.cc-sidebar-header .text-important {
+  font-family: 'Playfair Display', serif;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
 .cc-sidebar hr {
   border-color: var(--color-primary-800) !important;
 }

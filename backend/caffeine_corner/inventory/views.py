@@ -2,23 +2,20 @@ from django.contrib import admin
 from django.contrib.admin.views.decorators import staff_member_required
 from django.shortcuts import render
 # inventory/views.py
-from django.db.models import Sum, F, Count, Avg
+from django.db.models import Sum, F, Count
 from django.utils import timezone
 from decimal import Decimal
 import datetime
 import json
-from online_shop.models import Order, Product, LoyaltyPoint, OrderItem, Notification, ActivityLog
+from online_shop.models import Order, Product, LoyaltyPoint, Notification, ActivityLog
 from inventory.models import Inventory, PurchaseOrder, PurchaseOrderItem
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
-from django.db.models.functions import TruncDay, TruncMonth, TruncWeek
-from rest_framework.authentication import SessionAuthentication
-from rest_framework_simplejwt.authentication import JWTAuthentication
+from inventory.sales_report import ORDER_TYPES, build_sales_report, parse_report_params, sales_scope
 import csv
 import openpyxl
-from django.http import HttpResponse
-from django.shortcuts import redirect
+from django.http import HttpResponse, JsonResponse
+from django.shortcuts import redirect, get_object_or_404
+from django.views.decorators.http import require_POST
+from django.utils.html import format_html
 
 @staff_member_required
 def auto_generate_purchase_orders(request):
@@ -108,131 +105,97 @@ def auto_generate_purchase_orders(request):
     )
     return redirect('/admin/inventory/purchaseorder/')
 
+# Notification "bell" — the sidebar's live unread badge (see
+# static/js/notif-badge.js, polled every 20s) plus mark-as-read from either
+# NotificationAdmin's changelist column or the dashboard widget
+# (templates/admin/index.html), all without a page reload.
+#
+# HX-Request-aware rather than a plain redirect now: HTMX calls (both
+# callers above) post here and swap the response straight in. A non-HTMX
+# POST (e.g. JS disabled) still works and falls back to the old redirect.
 @staff_member_required
+@require_POST
 def mark_notification_read(request, notification_id):
-    from django.shortcuts import redirect
-    Notification.objects.filter(id=notification_id).update(is_read=True)
-    return redirect('/admin/online_shop/notification/')
+    from online_shop.admin import render_notif_read_cell
 
-class SalesReportView(APIView):
-    authentication_classes = [SessionAuthentication, JWTAuthentication]
-    permission_classes = [IsAuthenticated]
+    notif = get_object_or_404(Notification, pk=notification_id)
+    notif.is_read = True
+    notif.save(update_fields=['is_read'])
 
-    def get(self, request):
-        period = request.query_params.get('period', 'monthly')
-        year   = int(request.query_params.get('year', timezone.now().year))
+    if request.headers.get('HX-Request') != 'true':
+        return redirect('/admin/online_shop/notification/')
 
-        orders = Order.objects.filter(
-            created_at__year=year,
-        )
+    # Keeps the dashboard's "N unread" header in sync too, if present on
+    # the page that triggered this (harmless no-op otherwise — htmx just
+    # won't find a matching #notif-unread-count to swap into).
+    remaining = Notification.objects.filter(is_read=False).count()
+    oob_count = format_html(
+        '<span id="notif-unread-count" hx-swap-oob="true" '
+        'class="inline-block font-semibold rounded-default text-[11px] px-2 bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-400">'
+        '{} unread</span>',
+        remaining,
+    )
 
-        total_revenue = orders.aggregate(
-            total=Sum(F('items__price') * F('items__quantity'))
-        )['total'] or 0
-        total_orders  = orders.count()
-        total_items   = orders.aggregate(total=Sum('items__quantity'))['total'] or 0
+    # dashboard widget: the whole row disappears (list only shows unread).
+    if request.GET.get('remove'):
+        return HttpResponse(oob_count)
 
-        if period == 'daily':
-            trunc = TruncDay
-        elif period == 'weekly':
-            trunc = TruncWeek
-        else:
-            trunc = TruncMonth
+    # changelist column: swap the link for the static "✓ Read" badge.
+    return HttpResponse(render_notif_read_cell(notif) + oob_count)
 
-        revenue_by_period = (
-            orders
-            .annotate(period=trunc('created_at'))
-            .values('period')
-            .annotate(
-                revenue=Sum(F('items__price') * F('items__quantity')),
-                count=Count('id', distinct=True),
-            )
-            .order_by('period')
-        )
 
-        top_products = (
-            OrderItem.objects
-            .filter(order__created_at__year=year)
-            .values('product__id', 'product__name', 'product__image', 'product__category__name')
-            .annotate(
-                total_sold=Sum('quantity'),
-                total_revenue=Sum(F('price') * F('quantity')),
-                avg_price=Sum(F('price') * F('quantity')) / Sum('quantity'),
-                order_count=Count('order', distinct=True),
-            )
-            .order_by('-total_revenue')[:10]
-        )
+@staff_member_required
+def notif_unread_count(request):
+    return JsonResponse({'count': Notification.objects.filter(is_read=False).count()})
 
-        top_categories = (
-            OrderItem.objects
-            .filter(order__created_at__year=year)
-            .values('product__category__name')
-            .annotate(
-                total_sold=Sum('quantity'),
-                total_revenue=Sum(F('price') * F('quantity')),
-                product_count=Count('product', distinct=True),
-            )
-            .order_by('-total_revenue')
-        )
 
-        orders_by_status = (
-            Order.objects
-            .filter(created_at__year=year)
-            .values('status')
-            .annotate(count=Count('id'))
-        )
+# Quick Stock Adjustment widget on the Inventory changelist (see
+# render_quick_adjust / InventoryAdmin.show_quick_adjust in admin.py) — logs
+# a StockMovement straight from the list, no need to open the item. "+"
+# posts a Purchase (stock in), "-" an Adjustment (stock out); StockMovement's
+# own save() does the actual quantity_on_hand math (see that model). Returns
+# the widget (reset) plus the Stock Level / Status cells out-of-band so all
+# three stay in sync from one click.
+@staff_member_required
+@require_POST
+def htmx_adjust_stock(request, inventory_id):
+    from decimal import InvalidOperation
+    from django.http import HttpResponseBadRequest
+    from inventory.models import StockMovement
+    from inventory.admin import render_quick_adjust, render_stock_bar, render_stock_status
 
-        # ← Dagdag: Product performance metrics
-        product_performance = (
-            OrderItem.objects
-            .filter(order__created_at__year=year)
-            .values(
-                'product__id',
-                'product__name',
-                'product__category__name',
-                'product__price',
-            )
-            .annotate(
-                total_sold=Sum('quantity'),
-                total_revenue=Sum(F('price') * F('quantity')),
-                order_count=Count('order', distinct=True),
-                avg_rating=Avg('product__ratings__rating'),
-            )
-            .order_by('-total_sold')
-        )
+    inventory = get_object_or_404(Inventory, pk=inventory_id)
+    kind = request.GET.get('type')
+    if kind not in ('purchase', 'adjustment'):
+        return HttpResponseBadRequest('Invalid adjustment type')
 
-        return Response({
-            'summary': {
-                'total_revenue':   total_revenue,
-                'total_orders':    total_orders,
-                'total_items':     total_items,
-                'avg_order_value': round(float(total_revenue) / total_orders, 2) if total_orders else 0,
-            },
-            'revenue_by_period': [
-                {
-                    'period':  item['period'].strftime('%b %d' if period == 'daily' else '%b %Y'),
-                    'revenue': float(item['revenue'] or 0),
-                    'count':   item['count'],
-                }
-                for item in revenue_by_period
-            ],
-            'top_products':        list(top_products),
-            'top_categories':      list(top_categories),
-            'orders_by_status':    list(orders_by_status),
-            'product_performance': [
-                {
-                    'id':           p['product__id'],
-                    'name':         p['product__name'],
-                    'category':     p['product__category__name'],
-                    'base_price':   float(p['product__price'] or 0),
-                    'total_sold':   p['total_sold'] or 0,
-                    'total_revenue':float(p['total_revenue'] or 0),
-                    'order_count':  p['order_count'] or 0,
-                    'avg_rating':   round(float(p['avg_rating']), 1) if p['avg_rating'] else None,
-                }
-                for p in product_performance
-            ],
-        })
+    try:
+        qty = Decimal(request.POST.get('quantity', ''))
+    except InvalidOperation:
+        return HttpResponseBadRequest('Invalid quantity')
+    if qty <= 0:
+        return HttpResponseBadRequest('Quantity must be positive')
+
+    StockMovement.objects.create(
+        inventory=inventory,
+        movement_type=kind,
+        quantity=qty,
+        unit_cost=inventory.cost_per_unit,
+        reference='Quick adjust (admin)',
+        performed_by=request.user,
+    )
+    inventory.refresh_from_db()
+
+    html = render_quick_adjust(inventory)
+    html += format_html(
+        '<span id="stock-bar-{}" hx-swap-oob="true">{}</span>',
+        inventory.pk, render_stock_bar(inventory),
+    )
+    html += format_html(
+        '<span id="stock-status-{}" hx-swap-oob="true">{}</span>',
+        inventory.pk, render_stock_status(inventory),
+    )
+    return HttpResponse(html)
 
 
 @staff_member_required
@@ -372,110 +335,118 @@ def _export_excel(orders):
     wb.save(response)
     return response
 
+# The PDF's item-by-item transaction log is one row per line item sold — a
+# month is already ~20 pages. Past this many lines it's left out (with a note)
+# rather than building a document too big to render or print.
+MAX_LOG_ITEMS = 4000
+
+
 @staff_member_required
 def sales_report_view(request):
-    current_year = timezone.now().year
-    years = list(range(current_year - 3, current_year + 1))
     context = {
         **admin.site.each_context(request),
         'title': 'Sales Report',
-        'current_year': current_year,
-        'years': years,
+        'params': parse_report_params(request.GET),
+        'order_types': ORDER_TYPES,
     }
     return render(request, 'admin/sales_report.html', context)
+
+
+@staff_member_required
+def sales_report_data(request):
+    """JSON feed behind the interactive Sales Report page. Staff only: this
+    is every sale the shop has made."""
+    p = parse_report_params(request.GET)
+    return JsonResponse(build_sales_report(p.date_from, p.date_to, p.granularity, p.order_type))
 
 
 @staff_member_required
 def sales_report_document_view(request):
     """Printable, document-style sales report — 'Export as PDF' just prints
     this page (browser Save-as-PDF), so everything needed has to be baked
-    into the HTML server-side rather than fetched client-side."""
-    today = timezone.now().date()
+    into the HTML server-side rather than fetched client-side.
 
-    def _parse_date(value, fallback):
-        try:
-            return datetime.date.fromisoformat(value) if value else fallback
-        except ValueError:
-            return fallback
+    Numbers come from the same build_sales_report() as the interactive page,
+    so the two can't drift apart; only the row-level detail (transaction log,
+    delivery list) is assembled here."""
+    p = parse_report_params(request.GET)
+    report = build_sales_report(p.date_from, p.date_to, p.granularity, p.order_type)
+    orders, items = sales_scope(p.date_from, p.date_to, p.order_type)
 
-    date_from = _parse_date(request.GET.get('date_from', ''), today - datetime.timedelta(days=29))
-    date_to   = _parse_date(request.GET.get('date_to', ''), today)
-    if date_from > date_to:
-        date_from, date_to = date_to, date_from
+    # Detailed transaction log — one group per order type, each with its own
+    # subtotal. On by default for a month or less (as it always was); longer
+    # ranges leave it out unless asked for, and it's never built past
+    # MAX_LOG_ITEMS lines.
+    log_requested = request.GET.get('log', '1' if report['meta']['days'] <= 31 else '0') == '1'
+    log_lines     = items.count() if log_requested else 0
+    show_log      = log_requested and log_lines <= MAX_LOG_ITEMS
+    log_note      = ''
+    if log_requested and not show_log:
+        log_note = (f'The item-level transaction log has {log_lines:,} lines — too many for a single '
+                    f'document, so it is left out. Narrow the date range to include it.')
 
-    orders = (
-        Order.objects
-        .filter(created_at__date__gte=date_from, created_at__date__lte=date_to)
-        .select_related('zone')
-        .prefetch_related('items__product', 'items__variant')
-        .order_by('created_at')
-    )
-
-    total_orders    = orders.count()
-    delivered_count = orders.filter(status='delivered').count()
-    cancelled_count = orders.filter(status='cancelled').count()
-    total_revenue   = sum((o.total_price for o in orders), Decimal('0'))
-    avg_order_value = (total_revenue / total_orders) if total_orders else Decimal('0')
-
-    # Items sold — detailed transaction log
-    transaction_log = []
-    for order in orders:
-        for item in order.items.all():
-            transaction_log.append({
-                'date':     order.created_at,
-                'order_id': order.id,
-                'name':     item.product.name if item.product else '—',
+    groups = {
+        t['key']: {'key': t['key'], 'label': t['label'], 'rows': [], 'qty': 0, 'subtotal': Decimal('0')}
+        for t in report['by_type']
+    }
+    if show_log:
+        for item in items.select_related('order', 'product', 'variant').order_by('order__created_at', 'order_id', 'id'):
+            group = groups[item.order.order_type]
+            subtotal = item.price * item.quantity
+            group['rows'].append({
+                'date':     item.order.created_at,
+                'order_id': item.order_id,
+                'name':     item.product.name,
                 'size':     item.variant.get_size_display() if item.variant else '—',
                 'qty':      item.quantity,
                 'price':    item.price,
-                'subtotal': item.subtotal,
+                'subtotal': subtotal,
             })
+            group['qty'] += item.quantity
+            group['subtotal'] += subtotal
 
-    # Delivery fee summary — orders that actually had a delivery zone/fee
-    delivery_orders      = [o for o in orders if o.zone_id and o.delivery_fee]
-    total_delivery_fees  = sum((o.delivery_fee for o in delivery_orders), Decimal('0'))
-
-    # Payment & order type breakdown
-    gcash_orders   = orders.filter(payment_method='gcash').count()
-    cash_orders    = total_orders - gcash_orders
-    delivery_count = sum(1 for o in orders if o.zone_id)
-    pickup_count   = total_orders - delivery_count
+    # Delivery fee summary — orders that actually had a delivery zone/fee. The
+    # per-zone totals are always shown; the order-by-order listing is part of
+    # the detail (same switch as the item log) so a long range can't bloat it.
+    zone_orders         = orders.filter(zone__isnull=False, delivery_fee__gt=0)
+    delivery_by_zone    = list(
+        zone_orders.order_by().values('zone__name')
+        .annotate(n=Count('id'), fees=Sum('delivery_fee'))
+        .order_by('-fees', 'zone__name')
+    )
+    total_delivery_fees = sum((z['fees'] for z in delivery_by_zone), Decimal('0'))
+    delivery_orders     = list(zone_orders.select_related('zone').order_by('created_at')) if show_log else []
 
     # Downpayment collection summary
-    with_downpayment     = [o for o in orders if o.downpayment_amount]
-    downpayment_total    = sum((o.downpayment_amount for o in with_downpayment), Decimal('0'))
-    remaining_total      = sum((o.remaining_balance for o in with_downpayment), Decimal('0'))
-    full_payment_orders  = [o for o in orders if not o.downpayment_amount]
-    full_payment_total   = sum((o.total_price for o in full_payment_orders), Decimal('0'))
+    down        = orders.filter(downpayment_amount__gt=0).aggregate(n=Count('id'), paid=Sum('downpayment_amount'), left=Sum('remaining_balance'))
+    full        = orders.filter(downpayment_amount=0)
+    full_total  = (
+        (items.filter(order__downpayment_amount=0).aggregate(s=Sum(F('price') * F('quantity')))['s'] or Decimal('0'))
+        + (full.aggregate(f=Sum('delivery_fee'))['f'] or Decimal('0'))
+    )
 
     context = {
         **admin.site.each_context(request),
-        'title':          'Sales Report',
-        'date_from':      date_from,
-        'date_to':        date_to,
-        'generated_at':   timezone.now(),
-        'prepared_by':    request.user.get_full_name() or request.user.email,
-        'reference_no':   f'RPT-{timezone.now().strftime("%Y%m%d-%H%M%S")}',
-        'summary': {
-            'total_revenue':   total_revenue,
-            'total_orders':    total_orders,
-            'delivered_count': delivered_count,
-            'delivered_pct':   round(delivered_count / total_orders * 100, 1) if total_orders else 0,
-            'cancelled_count': cancelled_count,
-            'avg_order_value': avg_order_value,
-        },
-        'transaction_log':        transaction_log,
-        'delivery_orders':        delivery_orders,
-        'total_delivery_fees':    total_delivery_fees,
-        'gcash_orders':           gcash_orders,
-        'cash_orders':            cash_orders,
-        'delivery_count':         delivery_count,
-        'pickup_count':           pickup_count,
-        'orders_with_downpayment': len(with_downpayment),
-        'downpayment_total':      downpayment_total,
-        'remaining_total':        remaining_total,
-        'full_payment_count':     len(full_payment_orders),
-        'full_payment_total':     full_payment_total,
+        'title':        'Sales Report',
+        'params':       p,
+        'order_types':  ORDER_TYPES,
+        'report':       report,
+        'groups':       list(groups.values()),
+        'show_log':     show_log,
+        'log_requested': log_requested,
+        'log_note':     log_note,
+        'generated_at': timezone.now(),
+        'prepared_by':  request.user.get_full_name() or request.user.email,
+        'reference_no': f'RPT-{timezone.now().strftime("%Y%m%d-%H%M%S")}',
+        'show_delivery_section':   p.order_type in ('', 'regular'),
+        'delivery_orders':         delivery_orders,
+        'delivery_by_zone':        delivery_by_zone,
+        'total_delivery_fees':     total_delivery_fees,
+        'orders_with_downpayment': down['n'] or 0,
+        'downpayment_total':       down['paid'] or Decimal('0'),
+        'remaining_total':         down['left'] or Decimal('0'),
+        'full_payment_count':      full.count(),
+        'full_payment_total':      full_total,
     }
     return render(request, 'admin/sales_report_document.html', context)
 

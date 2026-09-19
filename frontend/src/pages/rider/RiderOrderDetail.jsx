@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { MapContainer, TileLayer, Marker } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
 import { getRiderOrders, markOrderDelivered } from '../../services/riderService.js'
+import { MAP_TILE_URL, MAP_TILE_ATTRIBUTION } from '../../utils/mapTiles'
 
 const ORDER_TYPE_LABELS = {
   regular: 'Regular',
@@ -132,10 +133,7 @@ const RiderOrderDetail = () => {
                 dragging={true}
                 scrollWheelZoom={false}
               >
-                <TileLayer
-                  url='https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'
-                  attribution='OpenStreetMap contributors'
-                />
+                <TileLayer url={MAP_TILE_URL} attribution={MAP_TILE_ATTRIBUTION} />
                 <Marker position={[lat, lng]} />
               </MapContainer>
             </div>

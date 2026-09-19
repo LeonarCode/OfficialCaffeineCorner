@@ -12,7 +12,11 @@ class CartItemInline(TabularInline):
     model = CartItem
     extra = 0
     fields = ['product', 'variant', 'quantity']
-    autocomplete_fields = ['product', 'variant']
+    # 'variant' isn't here: it needs its own registered ModelAdmin to power
+    # the autocomplete widget, but Variant is intentionally managed inline
+    # only (via ProductAdmin), same as Ingredient/CartItem elsewhere. It
+    # still renders fine as a plain FK dropdown.
+    autocomplete_fields = ['product']
 
 
 @admin.register(User)

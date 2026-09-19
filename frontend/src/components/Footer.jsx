@@ -70,7 +70,7 @@ const Footer = () => {
             ].map((cat) => (
               <Link
                 key={cat}
-                to={`/home?search=${cat}`}
+                to={`/home?category=${encodeURIComponent(cat)}`}
                 className='text-[#C4A882]/60 hover:text-[#C4A882] text-xs transition flex items-center gap-1.5'
               >
                 <span className='text-[#C4A882]/30'>›</span> {cat}

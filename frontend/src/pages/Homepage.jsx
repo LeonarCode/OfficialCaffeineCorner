@@ -16,13 +16,18 @@ const Homepage = () => {
   const location                            = useLocation()
   const navigate                            = useNavigate()
 
-  const searchQuery = new URLSearchParams(location.search).get('search') || ''
+  const params       = new URLSearchParams(location.search)
+  const searchQuery  = params.get('search') || ''
+  const categoryFromUrl = params.get('category') || ''
 
   useEffect(() => {
     fetchCategories()
     if (searchQuery) {
       fetchProducts(null, searchQuery)
       setActiveCategory('All')
+    } else if (categoryFromUrl) {
+      fetchProducts(categoryFromUrl)
+      setActiveCategory(categoryFromUrl)
     } else {
       fetchProducts()
       fetchFeatured()

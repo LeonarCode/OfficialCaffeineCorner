@@ -31,8 +31,8 @@
     }
     .toolbar form { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
     .toolbar label { display: block; font-size: 11px; font-weight: 600; color: #6b7280; text-transform: uppercase; margin-bottom: 4px; }
-    .toolbar input[type="date"] {
-      border: 1px solid #d1d5db; border-radius: 6px; padding: 7px 10px; font-size: 13px; font-family: inherit;
+    .toolbar input[type="date"], .toolbar select {
+      border: 1px solid #d1d5db; border-radius: 6px; padding: 7px 10px; font-size: 13px; font-family: inherit; background: #fff;
     }
     .toolbar button, .toolbar a.btn {
       border: none; border-radius: 6px; padding: 8px 16px; font-size: 13px; font-weight: 600;
@@ -70,6 +70,11 @@
     h2.section-title {
       font-size: 14px; font-weight: 700; margin: 0 0 10px;
     }
+    h3.group-title {
+      font-size: 12.5px; font-weight: 700; margin: 16px 0 6px; padding-bottom: 3px; border-bottom: 1px solid #1a1a1a;
+    }
+    h3.group-title:first-of-type { margin-top: 4px; }
+    p.note { font-size: 10.5px; font-style: italic; color: #666; margin-top: 8px; }
 
     .kv-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 4px; }
     .kv-table tr td { padding: 6px 0; border-bottom: 1px solid #eee; }
@@ -91,6 +96,16 @@
       font-weight: 700; padding-top: 8px;
     }
     table.doc-table td.empty { text-align: center; color: #888; font-style: italic; padding: 16px 0; }
+    table.doc-table tr.zero td { color: #aaa; }
+    table.doc-table tr.best td { background: #f7f1e8; font-weight: 700; }
+    table.doc-table .up   { color: #15803d; }
+    table.doc-table .down { color: #b91c1c; }
+
+    .signature-block { margin-top: 60px; display: flex; justify-content: flex-end; }
+    .signature-block .sig-cell { width: 260px; text-align: center; }
+    .signature-block .sig-line { border-top: 1.5px solid #1a1a1a; padding-top: 6px; }
+    .signature-block .sig-role { font-size: 11px; color: #444; }
+    .signature-block .sig-hint { font-size: 9.5px; color: #999; margin-top: 2px; }
 
     .doc-footer { text-align: center; font-size: 10.5px; color: #999; margin-top: 28px; }
 
@@ -102,6 +117,7 @@
       .page { box-shadow: none; padding: 0; max-width: 100%; margin: 0; }
       section { page-break-inside: avoid; }
       table.doc-table { page-break-inside: auto; }
+      table.doc-table tr.best td { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     }
   </style>
 </head>
@@ -112,15 +128,41 @@
     <form method="get">
       <div>
         <label for="date_from">From</label>
-        <input type="date" id="date_from" name="date_from" value="{{ date_from|date:'Y-m-d' }}">
+        <input type="date" id="date_from" name="date_from" value="{{ params.date_from|date:'Y-m-d' }}">
       </div>
       <div>
         <label for="date_to">To</label>
-        <input type="date" id="date_to" name="date_to" value="{{ date_to|date:'Y-m-d' }}">
+        <input type="date" id="date_to" name="date_to" value="{{ params.date_to|date:'Y-m-d' }}">
+      </div>
+      <div>
+        <label for="order_type">Order type</label>
+        <select id="order_type" name="order_type">
+          <option value="">All order types</option>
+          {% for key, label in order_types %}
+          <option value="{{ key }}" {% if params.order_type == key %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label for="granularity">Group by</label>
+        <select id="granularity" name="granularity">
+          <option value="auto" {% if params.granularity_choice == 'auto' %}selected{% endif %}>Auto</option>
+          <option value="daily" {% if params.granularity_choice == 'daily' %}selected{% endif %}>Daily</option>
+          <option value="weekly" {% if params.granularity_choice == 'weekly' %}selected{% endif %}>Weekly</option>
+          <option value="monthly" {% if params.granularity_choice == 'monthly' %}selected{% endif %}>Monthly</option>
+        </select>
+      </div>
+      <div>
+        <label for="log">Item log</label>
+        {# hidden 0 first: an unchecked box sends nothing, and "nothing" would fall back to the length-based default #}
+        <input type="hidden" name="log" value="0">
+        <label style="display:flex;align-items:center;gap:6px;margin:0;padding:7px 0;font-size:13px;font-weight:500;color:#374151;text-transform:none;">
+          <input type="checkbox" id="log" name="log" value="1" {% if log_requested %}checked{% endif %}> Include transaction log
+        </label>
       </div>
       <button type="submit" class="btn-apply">Apply</button>
     </form>
-    <a href="{% url 'sales-report' %}" class="btn-back">← Back to Dashboard</a>
+    <a href="{% url 'sales-report' %}?date_from={{ params.date_from|date:'Y-m-d' }}&amp;date_to={{ params.date_to|date:'Y-m-d' }}&amp;granularity={{ params.granularity_choice }}{% if params.order_type %}&amp;order_type={{ params.order_type }}{% endif %}" class="btn btn-back">← Back to Dashboard</a>
     <button type="button" class="btn-print" onclick="window.print()">🖨️ Export as PDF</button>
   </div>
 
@@ -139,7 +181,8 @@
     <!-- Meta -->
     <div class="meta-grid">
       <div>
-        <p><b>Period Covered:</b> {{ date_from|date:"M j, Y" }} – {{ date_to|date:"M j, Y" }}</p>
+        <p><b>Period Covered:</b> {{ params.date_from|date:"M j, Y" }} – {{ params.date_to|date:"M j, Y" }} ({{ report.meta.days }} day{{ report.meta.days|pluralize }})</p>
+        <p><b>Order Type:</b> {{ report.meta.order_type_label }}</p>
         <p><b>Prepared by:</b> {{ prepared_by }}</p>
       </div>
       <div style="text-align:right;">
@@ -153,18 +196,136 @@
     <!-- Summary -->
     <section>
       <h2 class="section-title">Summary</h2>
-      <table class="kv-table">
-        <tr><td>Total Revenue</td><td class="val">₱{{ summary.total_revenue|floatformat:2|intcomma }}</td></tr>
-        <tr><td>Total Orders</td><td class="val">{{ summary.total_orders }}</td></tr>
-        <tr><td>Delivered</td><td class="val">{{ summary.delivered_count }} ({{ summary.delivered_pct }}%)</td></tr>
-        <tr><td>Cancelled</td><td class="val">{{ summary.cancelled_count }}</td></tr>
-        <tr><td>Average Order Value</td><td class="val">₱{{ summary.avg_order_value|floatformat:2|intcomma }}</td></tr>
+      <table class="doc-table">
+        <thead>
+          <tr><th>Measure</th><th class="num">This period</th><th class="num">Previous period</th><th class="num">Change</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Total Sales</td>
+            <td class="num"><b>₱{{ report.summary.sales|floatformat:2|intcomma }}</b></td>
+            <td class="num">₱{{ report.previous.sales|floatformat:2|intcomma }}</td>
+            <td class="num">{% if report.comparison.sales is None %}—{% else %}<span class="{% if report.comparison.sales > 0 %}up{% elif report.comparison.sales < 0 %}down{% endif %}">{% if report.comparison.sales > 0 %}+{% endif %}{{ report.comparison.sales|floatformat:1 }}%</span>{% endif %}</td>
+          </tr>
+          <tr>
+            <td>Total Orders</td>
+            <td class="num"><b>{{ report.summary.orders|intcomma }}</b></td>
+            <td class="num">{{ report.previous.orders|intcomma }}</td>
+            <td class="num">{% if report.comparison.orders is None %}—{% else %}<span class="{% if report.comparison.orders > 0 %}up{% elif report.comparison.orders < 0 %}down{% endif %}">{% if report.comparison.orders > 0 %}+{% endif %}{{ report.comparison.orders|floatformat:1 }}%</span>{% endif %}</td>
+          </tr>
+          <tr>
+            <td>Items Sold</td>
+            <td class="num"><b>{{ report.summary.items|intcomma }}</b></td>
+            <td class="num">{{ report.previous.items|intcomma }}</td>
+            <td class="num">{% if report.comparison.items is None %}—{% else %}<span class="{% if report.comparison.items > 0 %}up{% elif report.comparison.items < 0 %}down{% endif %}">{% if report.comparison.items > 0 %}+{% endif %}{{ report.comparison.items|floatformat:1 }}%</span>{% endif %}</td>
+          </tr>
+          <tr>
+            <td>Average Order Value</td>
+            <td class="num"><b>₱{{ report.summary.avg_order|floatformat:2|intcomma }}</b></td>
+            <td class="num">₱{{ report.previous.avg_order|floatformat:2|intcomma }}</td>
+            <td class="num">{% if report.comparison.avg_order is None %}—{% else %}<span class="{% if report.comparison.avg_order > 0 %}up{% elif report.comparison.avg_order < 0 %}down{% endif %}">{% if report.comparison.avg_order > 0 %}+{% endif %}{{ report.comparison.avg_order|floatformat:1 }}%</span>{% endif %}</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="note">Previous period: {{ report.meta.previous_from }} to {{ report.meta.previous_to }} (same length). Cancelled orders are not counted as sales. Sales are product sales — delivery fees and loyalty discounts are shown separately below.</p>
+
+      <table class="kv-table" style="margin-top:12px;">
+        <tr><td>Delivered Orders</td><td class="val">{{ report.summary.delivered_orders }}</td></tr>
+        <tr><td>Cancelled Orders (not counted)</td><td class="val">{{ report.summary.cancelled_orders }}</td></tr>
+        <tr><td>Total Sales</td><td class="val">₱{{ report.summary.sales|floatformat:2|intcomma }}</td></tr>
+        <tr><td>Less: Loyalty Discounts</td><td class="val">−₱{{ report.summary.discounts|floatformat:2|intcomma }}</td></tr>
+        <tr><td>Add: Delivery Fees Collected</td><td class="val">₱{{ report.summary.delivery_fees|floatformat:2|intcomma }}</td></tr>
+        <tr class="total"><td>Total Collected</td><td class="val">₱{{ report.summary.collected|floatformat:2|intcomma }}</td></tr>
       </table>
     </section>
 
-    <!-- Items Sold -->
+    <!-- Sales by Order Type -->
     <section>
-      <h2 class="section-title">Items Sold — Detailed Transaction Log</h2>
+      <h2 class="section-title">Sales by Order Type</h2>
+      <table class="doc-table">
+        <thead>
+          <tr>
+            <th>Order Type</th><th class="num">Orders</th><th class="num">Items</th><th class="num">Sales</th>
+            <th class="num">Avg Order</th><th class="num">% of Sales</th><th class="num">vs Previous</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for t in report.by_type %}
+          <tr{% if not t.orders %} class="zero"{% endif %}>
+            <td>{{ t.label }}</td>
+            <td class="num">{{ t.orders|intcomma }}</td>
+            <td class="num">{{ t.items|intcomma }}</td>
+            <td class="num">₱{{ t.sales|floatformat:2|intcomma }}</td>
+            <td class="num">{% if t.orders %}₱{{ t.avg_order|floatformat:2|intcomma }}{% else %}—{% endif %}</td>
+            <td class="num">{{ t.share_pct|floatformat:1 }}%</td>
+            <td class="num">{% if t.change_pct is None %}—{% else %}<span class="{% if t.change_pct > 0 %}up{% elif t.change_pct < 0 %}down{% endif %}">{% if t.change_pct > 0 %}+{% endif %}{{ t.change_pct|floatformat:1 }}%</span>{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td>TOTAL</td>
+            <td class="num">{{ report.summary.orders|intcomma }}</td>
+            <td class="num">{{ report.summary.items|intcomma }}</td>
+            <td class="num">₱{{ report.summary.sales|floatformat:2|intcomma }}</td>
+            <td class="num">{% if report.summary.orders %}₱{{ report.summary.avg_order|floatformat:2|intcomma }}{% else %}—{% endif %}</td>
+            <td class="num">{% if report.summary.sales %}100.0%{% else %}—{% endif %}</td>
+            <td class="num"></td>
+          </tr>
+        </tfoot>
+      </table>
+      <p class="note">Delivery = orders placed for delivery to a customer’s address. Pick-up = collected at the counter. Dine-in = ordered at a table.</p>
+    </section>
+
+    <!-- Performance Record -->
+    <section>
+      <h2 class="section-title">Performance Record — {{ report.meta.granularity|title }}</h2>
+      <table class="doc-table">
+        <thead>
+          <tr>
+            <th>Period</th><th class="num">Orders</th><th class="num">Items</th><th class="num">Sales</th>
+            <th class="num">Avg Order</th><th class="num">vs Previous Row</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in report.series %}
+          <tr{% if row.is_best %} class="best"{% elif not row.orders %} class="zero"{% endif %}>
+            <td>{{ row.label }}{% if row.weekday %} <span style="color:#888">{{ row.weekday }}</span>{% endif %}{% if row.is_best %} ★{% endif %}</td>
+            <td class="num">{{ row.orders|intcomma }}</td>
+            <td class="num">{{ row.items|intcomma }}</td>
+            <td class="num">₱{{ row.sales|floatformat:2|intcomma }}</td>
+            <td class="num">{% if row.orders %}₱{{ row.avg_order|floatformat:2|intcomma }}{% else %}—{% endif %}</td>
+            <td class="num">{% if row.change_pct is None %}—{% else %}<span class="{% if row.change_pct > 0 %}up{% elif row.change_pct < 0 %}down{% endif %}">{% if row.change_pct > 0 %}+{% endif %}{{ row.change_pct|floatformat:1 }}%</span>{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td>TOTAL</td>
+            <td class="num">{{ report.summary.orders|intcomma }}</td>
+            <td class="num">{{ report.summary.items|intcomma }}</td>
+            <td class="num">₱{{ report.summary.sales|floatformat:2|intcomma }}</td>
+            <td class="num">{% if report.summary.orders %}₱{{ report.summary.avg_order|floatformat:2|intcomma }}{% else %}—{% endif %}</td>
+            <td class="num"></td>
+          </tr>
+        </tfoot>
+      </table>
+      <p class="note">★ marks the best period by sales. “vs Previous Row” compares each period’s sales with the row above it.</p>
+    </section>
+
+    {% if log_note %}
+    <section>
+      <h2 class="section-title">Items Sold — Detailed Transaction Log by Order Type</h2>
+      <p class="note">{{ log_note }}</p>
+    </section>
+    {% endif %}
+
+    {% if show_log %}
+    <!-- Items Sold — grouped by order type -->
+    <section>
+      <h2 class="section-title">Items Sold — Detailed Transaction Log by Order Type</h2>
+      {% for group in groups %}
+      <h3 class="group-title">{{ group.label }}</h3>
       <table class="doc-table">
         <thead>
           <tr>
@@ -173,7 +334,7 @@
           </tr>
         </thead>
         <tbody>
-          {% for row in transaction_log %}
+          {% for row in group.rows %}
           <tr>
             <td>{{ forloop.counter }}</td>
             <td>{{ row.date|date:"M j, Y g:iA" }}</td>
@@ -185,20 +346,50 @@
             <td class="num">₱{{ row.subtotal|floatformat:2|intcomma }}</td>
           </tr>
           {% empty %}
-          <tr><td class="empty" colspan="8">No items sold in this period.</td></tr>
+          <tr><td class="empty" colspan="8">No {{ group.label|lower }} items sold in this period.</td></tr>
           {% endfor %}
         </tbody>
-        {% if transaction_log %}
+        {% if group.rows %}
         <tfoot>
-          <tr><td colspan="7">TOTAL</td><td class="num">₱{{ summary.total_revenue|floatformat:2|intcomma }}</td></tr>
+          <tr><td colspan="5">SUBTOTAL — {{ group.label|upper }}</td><td class="num">{{ group.qty|intcomma }}</td><td></td><td class="num">₱{{ group.subtotal|floatformat:2|intcomma }}</td></tr>
         </tfoot>
         {% endif %}
       </table>
+      {% endfor %}
+      <table class="kv-table" style="margin-top:14px;">
+        <tr class="total"><td>GRAND TOTAL — ALL ITEMS SOLD ({{ report.summary.items|intcomma }} items)</td><td class="val">₱{{ report.summary.sales|floatformat:2|intcomma }}</td></tr>
+      </table>
     </section>
+    {% endif %}
 
+    {% if show_delivery_section %}
     <!-- Delivery Fee Summary -->
     <section>
       <h2 class="section-title">Delivery Fee Summary</h2>
+      <table class="doc-table">
+        <thead>
+          <tr><th>Zone</th><th class="num">Orders</th><th class="num">Delivery Fees</th></tr>
+        </thead>
+        <tbody>
+          {% for z in delivery_by_zone %}
+          <tr>
+            <td>{{ z.zone__name|default:"—" }}</td>
+            <td class="num">{{ z.n|intcomma }}</td>
+            <td class="num">₱{{ z.fees|floatformat:2|intcomma }}</td>
+          </tr>
+          {% empty %}
+          <tr><td class="empty" colspan="3">No delivery fees in this period.</td></tr>
+          {% endfor %}
+        </tbody>
+        {% if delivery_by_zone %}
+        <tfoot>
+          <tr><td>TOTAL DELIVERY FEES COLLECTED</td><td class="num"></td><td class="num">₱{{ total_delivery_fees|floatformat:2|intcomma }}</td></tr>
+        </tfoot>
+        {% endif %}
+      </table>
+
+      {% if show_log and delivery_orders %}
+      <h3 class="group-title" style="margin-top:18px;">Delivery Orders</h3>
       <table class="doc-table">
         <thead>
           <tr>
@@ -214,26 +405,34 @@
             <td>{{ order.address }}</td>
             <td class="num">₱{{ order.delivery_fee|floatformat:2|intcomma }}</td>
           </tr>
-          {% empty %}
-          <tr><td class="empty" colspan="5">No delivery orders in this period.</td></tr>
           {% endfor %}
         </tbody>
-        {% if delivery_orders %}
-        <tfoot>
-          <tr><td colspan="4">TOTAL DELIVERY FEES COLLECTED</td><td class="num">₱{{ total_delivery_fees|floatformat:2|intcomma }}</td></tr>
-        </tfoot>
-        {% endif %}
       </table>
+      {% elif delivery_by_zone %}
+      <p class="note">The order-by-order delivery listing is part of the item-level transaction log and is not included in this report.</p>
+      {% endif %}
     </section>
+    {% endif %}
 
-    <!-- Payment & Order Type Breakdown -->
+    <!-- Payment Methods -->
     <section>
-      <h2 class="section-title">Payment &amp; Order Type Breakdown</h2>
-      <table class="kv-table">
-        <tr><td>GCash Orders</td><td class="val">{{ gcash_orders }}</td></tr>
-        <tr><td>Cash Orders</td><td class="val">{{ cash_orders }}</td></tr>
-        <tr><td>Delivery Orders</td><td class="val">{{ delivery_count }}</td></tr>
-        <tr><td>Pickup Orders</td><td class="val">{{ pickup_count }}</td></tr>
+      <h2 class="section-title">Payment Method Breakdown</h2>
+      <table class="doc-table">
+        <thead>
+          <tr><th>Payment Method</th><th class="num">Orders</th><th class="num">Sales</th></tr>
+        </thead>
+        <tbody>
+          {% for p in report.payment_methods %}
+          <tr{% if not p.orders %} class="zero"{% endif %}>
+            <td>{{ p.label }}</td>
+            <td class="num">{{ p.orders|intcomma }}</td>
+            <td class="num">₱{{ p.sales|floatformat:2|intcomma }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+        <tfoot>
+          <tr><td>TOTAL</td><td class="num">{{ report.summary.orders|intcomma }}</td><td class="num">₱{{ report.summary.sales|floatformat:2|intcomma }}</td></tr>
+        </tfoot>
       </table>
     </section>
 
@@ -245,9 +444,19 @@
         <tr><td>Downpayment Collected (GCash, in advance)</td><td class="val">₱{{ downpayment_total|floatformat:2|intcomma }}</td></tr>
         <tr><td>Remaining Balance (Collected on Delivery/Pickup)</td><td class="val">₱{{ remaining_total|floatformat:2|intcomma }}</td></tr>
         <tr><td>Full-Payment Orders (No Downpayment)</td><td class="val">{{ full_payment_count }}</td></tr>
-        <tr class="total"><td>Full-Payment Total</td><td class="val">₱{{ full_payment_total|floatformat:2|intcomma }}</td></tr>
+        <tr class="total"><td>Full-Payment Total (incl. delivery fees)</td><td class="val">₱{{ full_payment_total|floatformat:2|intcomma }}</td></tr>
       </table>
     </section>
+
+    <!-- Signature -->
+    <div class="signature-block">
+      <div class="sig-cell">
+        <div class="sig-line">
+          <p class="sig-role">Owner / Authorized Signatory</p>
+          <p class="sig-hint">Signature over Printed Name — Date Signed</p>
+        </div>
+      </div>
+    </div>
 
     <div class="doc-footer">
       Generated by Caffeine Corner Admin · {{ generated_at|date:"M j, Y, g:i A" }}

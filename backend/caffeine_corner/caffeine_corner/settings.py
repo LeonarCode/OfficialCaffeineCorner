@@ -30,7 +30,11 @@ SECRET_KEY = os.getenv("SECRET_KEY")
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+# NOTE: ALLOWED_HOSTS is set once, further down (near CSRF_TRUSTED_ORIGINS),
+# with the actual list of hosts this runs on (127.0.0.1, LAN IPs, etc.) —
+# it used to be redefined here too as an empty list, which happened to be
+# harmless only because Python re-assignment let the later one win, but it
+# was confusing and one edit away from silently locking every host out.
 
 
 # Application definition
@@ -220,11 +224,31 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
-CSRF_TRUSTED_ORIGINS = ['http://localhost:5173', 'http://127.0.0.1:5173']
+ALLOWED_HOSTS = ['localhost', '127.0.0.1', '192.168.1.6', '192.168.1.8']
+
+CSRF_TRUSTED_ORIGINS = [
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
+    'http://192.168.1.6:5173',
+    'http://192.168.1.8:5173',
+]
+
+# Where /admin/login/ sends you when the URL has no ?next= (Unfold's login
+# form has no hidden "next" field, so a direct visit — after logging out, or
+# from a bookmark — used to land on Django's default /accounts/profile/,
+# which doesn't exist here: a 404 right after a successful login).
+LOGIN_REDIRECT_URL = 'admin:index'
 
 CORS_ALLOW_CREDENTIALS = True
 
 CORS_ALLOW_ALL_ORIGINS = True
+
+FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://192.168.1.8:5173')
+
+# Free key from https://cloud.maptiler.com/account/keys/ — used by the Town
+# Zone admin map for the full detailed OSM-style basemap. Left blank, the
+# map falls back to Esri's (less detailed but key-free) street tiles.
+MAPTILER_KEY = os.getenv('MAPTILER_KEY', '')
 
 UNFOLD = {
     "SITE_TITLE": "CAFFIENE CORNER",
@@ -238,7 +262,20 @@ UNFOLD = {
         "image": lambda request: static("img/Background.jpeg"),
     },
     "STYLES": [
+        # Same Google Font as the React frontend's brand wordmark (see
+        # frontend/index.html) — keeps "CAFFIENE CORNER" in the sidebar
+        # looking like the one customers see, not the admin's default Inter.
+        lambda request: "https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,600;0,700;1,400&display=swap",
         lambda request: static("css/admin-theme.css"),
+    ],
+    # Unfold already loads HTMX itself (unfold/js/htmx/htmx.js) on every
+    # admin page — this just teaches it to send Django's CSRF token, used
+    # by the inline status/payment toggles on the Orders list (see
+    # OrderAdmin.show_status / show_payment_status).
+    "SCRIPTS": [
+        lambda request: static("js/htmx-csrf.js"),
+        lambda request: static("js/notif-badge.js"),
+        lambda request: static("js/orderitem-price.js"),
     ],
     "COLORS": {
         "primary": {
@@ -274,11 +311,6 @@ UNFOLD = {
                         "link": reverse_lazy("admin:online_shop_order_changelist"),
                     },
                     {
-                        "title": "📄 Export CSV",
-                        "icon": "description",
-                        "link": "/admin/export-orders/?format=csv",
-                    },
-                    {
                         "title": "Sales Report",
                         "icon": "bar_chart",
                         "link": "/admin/sales-report/",
@@ -304,11 +336,6 @@ UNFOLD = {
                         "title": "Products",
                         "icon": "local_cafe",
                         "link": reverse_lazy("admin:online_shop_product_changelist"),
-                    },
-                    {
-                        "title": "Variants",
-                        "icon": "tune",
-                        "link": reverse_lazy("admin:online_shop_variant_changelist"),
                     },
                     {
                         "title": "Categories",

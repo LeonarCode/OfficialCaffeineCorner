@@ -1,7 +1,7 @@
 import axios from 'axios'
 import { jwtDecode } from 'jwt-decode'
 
-export const BASE_URL = 'http://localhost:8000'
+export const BASE_URL = `http://${window.location.hostname}:8000`
 
 const api = axios.create({
     baseURL: BASE_URL

@@ -2,6 +2,7 @@ import React, { useState, useCallback, useEffect } from 'react'
 import { MapContainer, TileLayer, Marker, useMapEvents, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
+import { MAP_TILE_URL, MAP_TILE_ATTRIBUTION } from '../utils/mapTiles'
 
 delete L.Icon.Default.prototype._getIconUrl
 L.Icon.Default.mergeOptions({
@@ -39,9 +40,27 @@ const RecenterOnZone = ({ zoneCenter }) => {
   return null
 }
 
-const LocationPicker = ({ value, onChange, zone }) => {
+// Reverse-geocode via OSM Nominatim (same provider as the tile layer below —
+// free, no API key). Picks the closest thing to a PH "barangay" out of
+// whatever address parts Nominatim returns for that spot.
+const reverseGeocode = async ([lat, lng]) => {
+  const res = await fetch(
+    `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`,
+    { headers: { 'Accept-Language': 'en' } }
+  )
+  if (!res.ok) throw new Error('Reverse geocoding failed')
+  const data = await res.json()
+  const addr = data.address || {}
+  const barangay = addr.village || addr.suburb || addr.neighbourhood || addr.quarter || addr.city_district || addr.hamlet || ''
+  const municipality = addr.town || addr.municipality || addr.city || ''
+  return [barangay, municipality, 'Bohol'].filter(Boolean).join(', ')
+}
+
+const LocationPicker = ({ value, onChange, zone, onAddressDetected }) => {
   const [position, setPosition] = useState(value || null)
   const [locating, setLocating] = useState(false)
+  const [detecting, setDetecting] = useState(false)
+  const [detectedAddress, setDetectedAddress] = useState('')
   const [error, setError] = useState('')
 
   const zoneCenter = zone?.center_latitude && zone?.center_longitude
@@ -60,7 +79,20 @@ const LocationPicker = ({ value, onChange, zone }) => {
   const handleSelect = useCallback((latlng) => {
     setPosition(latlng)
     onChange(latlng)
-  }, [onChange])
+
+    // Auto-detect the barangay for this pin and hand it up to the form.
+    setDetecting(true)
+    setDetectedAddress('')
+    reverseGeocode(latlng)
+      .then(guess => {
+        setDetectedAddress(guess)
+        if (guess) onAddressDetected?.(guess)
+      })
+      .catch(() => {
+        // Hindi kritikal — manual pa rin pwede mag-type ng address.
+      })
+      .finally(() => setDetecting(false))
+  }, [onChange, onAddressDetected])
 
   const handleUseMyLocation = () => {
     if (!navigator.geolocation) {
@@ -105,10 +137,7 @@ const LocationPicker = ({ value, onChange, zone }) => {
           zoom={position ? 16 : zoneCenter ? 14 : 13}
           style={{ height: '100%', width: '100%' }}
         >
-          <TileLayer
-            url='https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png'
-            attribution='OpenStreetMap contributors'
-          />
+          <TileLayer url={MAP_TILE_URL} attribution={MAP_TILE_ATTRIBUTION} />
           <ClickHandler onSelect={handleSelect} />
           {position && <Marker position={position} />}
           {position && <RecenterOnLocate position={position} />}
@@ -119,9 +148,18 @@ const LocationPicker = ({ value, onChange, zone }) => {
       {error && <p className='text-red-400 text-xs'>{error}</p>}
 
       {position ? (
-        <p className='text-gray-400 text-xs'>
-          Pinned at {position[0].toFixed(5)}, {position[1].toFixed(5)}
-        </p>
+        <div className='flex flex-col gap-0.5'>
+          <p className='text-gray-400 text-xs'>
+            Pinned at {position[0].toFixed(5)}, {position[1].toFixed(5)}
+          </p>
+          {detecting ? (
+            <p className='text-[#6f4e37] text-xs'>Detecting barangay...</p>
+          ) : detectedAddress ? (
+            <p className='text-[#6f4e37] text-xs'>
+              📍 Detected: <span className='font-semibold'>{detectedAddress}</span> — auto-filled below, feel free to edit.
+            </p>
+          ) : null}
+        </div>
       ) : zoneCenter ? (
         <p className='text-gray-400 text-xs'>
           Showing {zone.name} area. Tap on the map to drop your exact pin.

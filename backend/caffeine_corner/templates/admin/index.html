@@ -10,13 +10,13 @@
     <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
       <div class="flex items-center gap-2">
         <h2 class="font-semibold text-[15px] text-font-important-light dark:text-font-important-dark">{% trans "Notifications" %}</h2>
-        <span class="inline-block font-semibold rounded-default text-[11px] px-2 bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-400">{{ unread_count }} {% trans "unread" %}</span>
+        <span id="notif-unread-count" class="inline-block font-semibold rounded-default text-[11px] px-2 bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-400">{{ unread_count }} {% trans "unread" %}</span>
       </div>
       <a href="{% url 'admin:online_shop_notification_changelist' %}" class="text-xs font-medium text-primary-600 dark:text-primary-500 hover:text-primary-700 dark:hover:text-primary-400">{% trans "View all" %} →</a>
     </div>
     <div class="flex flex-col">
       {% for notif in unread_notifications %}
-      <div class="flex items-start gap-3 py-3 border-b border-base-200 dark:border-base-800 last:border-b-0">
+      <div class="flex items-start gap-3 py-3 border-b border-base-200 dark:border-base-800 last:border-b-0" style="transition:opacity .2s ease-out">
         <span class="material-symbols-outlined shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-base
           {% if notif.variant == 'primary' %}bg-primary-100 text-primary-700 dark:bg-primary-500/20 dark:text-primary-400
           {% elif notif.variant == 'success' %}bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-400
@@ -29,7 +29,11 @@
           <p class="text-xs text-base-400 mt-1">{{ notif.created_at }}</p>
         </div>
         {% if notif.id %}
-        <a href="/admin/mark-notification-read/{{ notif.id }}/" class="text-xs font-medium text-primary-600 dark:text-primary-500 hover:text-primary-700 dark:hover:text-primary-400 whitespace-nowrap">{% trans "Mark read" %}</a>
+        <a href="#"
+           hx-post="/admin/mark-notification-read/{{ notif.id }}/?remove=1"
+           hx-target="closest div.flex.items-start"
+           hx-swap="outerHTML swap:0.2s"
+           class="text-xs font-medium text-primary-600 dark:text-primary-500 hover:text-primary-700 dark:hover:text-primary-400 whitespace-nowrap cursor-pointer">{% trans "Mark read" %}</a>
         {% endif %}
       </div>
       {% endfor %}

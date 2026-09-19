@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { createOrder, getLoyaltyPoints, createPayMongoSource } from '../services/orderService.js'
 import { getCart } from '../services/cartService.js'
@@ -32,6 +32,19 @@ const Checkout = () => {
   const [deliveryCoords, setDeliveryCoords] = useState(null)
   const { isAuthenticated }                 = useAuth()
   const [form, setForm] = useState({ email: '', phone: '', address: '', notes: '' })
+  const lastAutoAddress = useRef('')
+
+  // Kapag na-pin ang location, i-autofill ang barangay sa address — pero
+  // huwag i-overwrite kung may sarili na siyang tinype na hindi galing dito.
+  const handleAddressDetected = (guess) => {
+    setForm(prev => {
+      if (prev.address.trim() === '' || prev.address === lastAutoAddress.current) {
+        lastAutoAddress.current = guess
+        return { ...prev, address: guess }
+      }
+      return prev
+    })
+  }
 
   const location   = useLocation()
   const navigate   = useNavigate()
@@ -541,7 +554,12 @@ const Checkout = () => {
                     </div>
 
                     <div>
-                      <LocationPicker value={deliveryCoords} onChange={setDeliveryCoords} zone={selectedZone} />
+                      <LocationPicker
+                        value={deliveryCoords}
+                        onChange={setDeliveryCoords}
+                        zone={selectedZone}
+                        onAddressDetected={handleAddressDetected}
+                      />
                       {errors.location && <p className='text-red-400 text-xs mt-1'>{errors.location}</p>}
                     </div>
                   </>

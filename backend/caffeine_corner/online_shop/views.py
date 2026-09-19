@@ -1,4 +1,4 @@
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from django.utils import timezone
 from datetime import timedelta
 from rest_framework import generics, status
@@ -8,7 +8,8 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.parsers import MultiPartParser, FormParser
 from django.views.decorators.csrf import csrf_exempt
-from django.http import HttpResponse
+from django.views.decorators.http import require_POST
+from django.http import HttpResponse, HttpResponseBadRequest, JsonResponse
 from django.shortcuts import get_object_or_404, render
 from .models import Category, Product, Order, OrderItem, CartItem, LoyaltyPoint, Rating, TownZone
 from .serializer import (
@@ -24,6 +25,7 @@ import hashlib
 import requests
 from django.contrib import admin
 from django.contrib.admin.views.decorators import staff_member_required
+from django.conf import settings
 
 import qrcode, io, base64
 
@@ -35,10 +37,86 @@ def print_order_receipt(request, order_id):
     )
     return render(request, 'admin/order_receipt.html', {'order': order})
 
+
+# Inline status/payment toggles on the Orders changelist (OrderAdmin.show_status
+# / show_payment_status) — HTMX posts here on <select> change and swaps in
+# the re-rendered select, no full page reload. Plain .save() (not .update())
+# on purpose, same reasoning as the bulk actions in admin.py: it needs
+# Order's post_save signals to actually fire (notifications, activity log,
+# ingredient-stock restore-on-cancel).
+@staff_member_required
+@require_POST
+def htmx_set_order_status(request, order_id):
+    from .admin import render_status_select
+    order = get_object_or_404(Order, pk=order_id)
+    new_status = request.POST.get('status')
+    if new_status in dict(Order.STATUS_CHOICES):
+        order.status = new_status
+        order.save()
+    return HttpResponse(render_status_select(order))
+
+
+@staff_member_required
+@require_POST
+def htmx_set_payment_status(request, order_id):
+    from .admin import render_payment_select
+    order = get_object_or_404(Order, pk=order_id)
+    new_status = request.POST.get('payment_status')
+    if new_status in dict(Order.PAYMENT_STATUS_CHOICES):
+        order.payment_status = new_status
+        order.save()
+    return HttpResponse(render_payment_select(order))
+
+
+# Auto-save for the TownZone "click the map to set the center" widget (see
+# TownZoneAdminForm.media / townzone-map.js) — fires on every click/drag/typed
+# coordinate change so the admin never has to hit the form's own Save button
+# just to pin a zone center. Only wired up on the change form (an unsaved
+# zone has no pk yet to save against — see TownZoneAdminForm.media).
+@staff_member_required
+@require_POST
+def htmx_set_townzone_center(request, zone_id):
+    zone = get_object_or_404(TownZone, pk=zone_id)
+    try:
+        lat = Decimal(request.POST.get('lat', ''))
+        lng = Decimal(request.POST.get('lng', ''))
+    except InvalidOperation:
+        return HttpResponseBadRequest('Invalid coordinates')
+    if not (-90 <= lat <= 90 and -180 <= lng <= 180):
+        return HttpResponseBadRequest('Coordinates out of range')
+    zone.center_latitude = lat
+    zone.center_longitude = lng
+    zone.save(update_fields=['center_latitude', 'center_longitude'])
+    return HttpResponse('OK')
+
+
+# Auto-fills the per-unit Price on the Order Items inline (see
+# OrderItemInline / static/js/orderitem-price.js) once staff pick a Product
+# (and Variant, if any) for a manually-entered order — no more looking up
+# and typing the current price by hand. `price` on OrderItem is a snapshot
+# taken at order time (see the model), not a live FK, so this only matters
+# at entry time; it doesn't change what's already saved on past orders.
+@staff_member_required
+def get_item_price(request, product_id):
+    from .models import Variant
+
+    product = get_object_or_404(Product, pk=product_id)
+    price = product.price
+
+    variant_id = request.GET.get('variant')
+    if variant_id:
+        try:
+            variant = Variant.objects.get(pk=variant_id, product_id=product_id)
+            price += variant.additional_price
+        except (Variant.DoesNotExist, ValueError):
+            pass
+
+    return JsonResponse({'price': str(price)})
+
 # ← HUWAG TANGGALIN — para sa download
 @staff_member_required
 def generate_table_qr(request, table_number):
-    url = f'http://localhost:5173/menu?table={table_number}'
+    url = f'{settings.FRONTEND_URL}/menu?table={table_number}'
     qr  = qrcode.QRCode(version=1, box_size=10, border=4)
     qr.add_data(url)
     qr.make(fit=True)
@@ -54,9 +132,11 @@ def generate_table_qr(request, table_number):
 # ← BAGONG VIEW — para sa page display
 @staff_member_required
 def table_qr_page(request):
+    from .models import VALID_TABLE_NUMBERS
+
     tables = []
-    for i in range(1, 6):
-        url    = f'http://localhost:5173/menu?table={i}'
+    for i in sorted(VALID_TABLE_NUMBERS, key=int):
+        url    = f'{settings.FRONTEND_URL}/menu?table={i}'
         qr     = qrcode.QRCode(version=1, box_size=8, border=3)
         qr.add_data(url)
         qr.make(fit=True)
@@ -281,12 +361,12 @@ def paymongo_webhook(request):
 
 def dine_in_landing(request, table_number):
     """Landing page kapag na-scan ang QR code ng table."""
-    valid_tables = ['1', '2', '3', '4', '5']
-    if str(table_number) not in valid_tables:
+    from .models import VALID_TABLE_NUMBERS
+    if str(table_number) not in VALID_TABLE_NUMBERS:
         return render(request, 'dine_in_invalid.html', status=404)
     return render(request, 'dine_in_landing.html', {
         'table_number': table_number,
-        'redirect_url': f'http://localhost:5173/menu?table={table_number}'
+        'redirect_url': f'{settings.FRONTEND_URL}/menu?table={table_number}'
     })
 
 # ─── Categories ───────────────────────────────────────────
@@ -303,15 +383,25 @@ class ProductListView(generics.ListAPIView):
 
     def get_queryset(self):
         qs = Product.objects.filter(is_available=True).select_related('category').prefetch_related('variants', 'ratings')
-        category = self.request.query_params.get('category')
-        featured = self.request.query_params.get('featured')
-        search = self.request.query_params.get('search')
+        category     = self.request.query_params.get('category')
+        featured     = self.request.query_params.get('featured')
+        search       = self.request.query_params.get('search')
+        best_sellers = self.request.query_params.get('best_sellers')
         if category:
             qs = qs.filter(category__name__iexact=category)
         if featured:
             qs = qs.filter(is_featured=True)
         if search:
             qs = qs.filter(name__icontains=search)
+        if best_sellers:
+            from django.db.models import Sum
+            # Ranked by actual units sold (OrderItem.quantity) — hindi lang
+            # basta is_featured flag, totoong sales data ang basehan.
+            qs = (
+                qs.annotate(total_sold=Sum('orderitem__quantity'))
+                  .filter(total_sold__gt=0)
+                  .order_by('-total_sold')
+            )
         return qs
 
 

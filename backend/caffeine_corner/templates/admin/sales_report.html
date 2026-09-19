@@ -2,6 +2,53 @@
 {% load i18n %}
 
 {% block content %}
+<style>
+  /* Layout + small components this page needs that Unfold's prebuilt CSS may not ship. */
+  .sr-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 1rem; }
+  /* Fixed height (not an aspect ratio) so the chart stays readable on a phone instead of shrinking to a sliver. */
+  .sr-chart { position: relative; height: 340px; }
+  @media (max-width: 640px) { .sr-chart { height: 260px; } }
+  .sr-scroll { max-height: 30rem; overflow: auto; }
+  .sr-scroll thead th { position: sticky; top: 0; z-index: 1; background: #fff; }
+  html.dark .sr-scroll thead th { background: var(--color-base-900); }
+
+  /* display:flex (from Tailwind classes or inline) beats the [hidden] attribute — force it. */
+  #srError[hidden], .sr-empty[hidden] { display: none !important; }
+  .sr-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+
+  .sr-chip {
+    display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+    padding: 5px 12px; border-radius: 9999px; font-size: 12px; font-weight: 600; line-height: 1.3;
+    border: 1px solid var(--color-base-200, #e5e7eb); background: transparent; color: inherit;
+    transition: background-color .12s, border-color .12s, color .12s;
+  }
+  .sr-chip:hover { border-color: var(--color-primary-600); }
+  .sr-chip[aria-pressed="true"] { background: var(--color-primary-600); border-color: var(--color-primary-600); color: #fff; }
+  html.dark .sr-chip { border-color: var(--color-base-700, #374151); }
+
+  .sr-dot { width: 9px; height: 9px; border-radius: 9999px; flex: none; display: inline-block; }
+
+  .sr-delta { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 9999px; white-space: nowrap; }
+  .sr-delta--up   { background: rgb(220 252 231); color: rgb(21 128 61); }
+  .sr-delta--down { background: rgb(254 226 226); color: rgb(185 28 28); }
+  .sr-delta--flat, .sr-delta--none { background: rgb(243 244 246); color: rgb(107 114 128); }
+  .sr-delta--new  { background: rgb(219 234 254); color: rgb(29 78 216); }
+  html.dark .sr-delta--up   { background: rgba(34,197,94,.2);  color: rgb(74 222 128); }
+  html.dark .sr-delta--down { background: rgba(239,68,68,.2);  color: rgb(248 113 113); }
+  html.dark .sr-delta--flat, html.dark .sr-delta--none { background: rgba(156,163,175,.16); color: rgb(156 163 175); }
+  html.dark .sr-delta--new  { background: rgba(59,130,246,.2); color: rgb(96 165 250); }
+
+  .sr-best { background: rgba(196, 168, 130, .16); }
+  .sr-zero td { opacity: .55; }
+  .sr-pill { font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 9999px; background: var(--color-primary-600); color: #fff; margin-left: 6px; vertical-align: middle; }
+
+  #srContent { transition: opacity .15s; }
+  #srContent.sr-loading { opacity: .5; pointer-events: none; }
+  .sr-th { font-weight: 600; font-size: 12px; text-transform: uppercase; padding: 8px 12px; white-space: nowrap; }
+  .sr-td { padding: 9px 12px; white-space: nowrap; }
+  .sr-input { border-width: 1px; }
+</style>
+
 <div class="flex flex-col gap-6">
 
   <!-- Header -->
@@ -14,242 +61,531 @@
       </a>
       <h1 class="text-xl font-bold text-font-important-light dark:text-font-important-dark m-0">{% trans "Sales Report" %}</h1>
     </div>
-    <div class="flex items-center gap-2 flex-wrap">
-      <select id="periodFilter" onchange="loadReport()" aria-label="{% trans 'Report period' %}"
-        class="border border-base-200 bg-white font-medium rounded-default shadow-xs text-font-default-light text-sm px-3 py-2 focus:outline-2 focus:-outline-offset-2 focus:outline-primary-600 dark:bg-base-900 dark:border-base-700 dark:text-font-default-dark">
-        <option value="daily">{% trans "Daily" %}</option>
-        <option value="weekly">{% trans "Weekly" %}</option>
-        <option value="monthly" selected>{% trans "Monthly" %}</option>
-      </select>
-      <select id="yearFilter" onchange="loadReport()" aria-label="{% trans 'Report year' %}"
-        class="border border-base-200 bg-white font-medium rounded-default shadow-xs text-font-default-light text-sm px-3 py-2 focus:outline-2 focus:-outline-offset-2 focus:outline-primary-600 dark:bg-base-900 dark:border-base-700 dark:text-font-default-dark">
-        {% for y in years %}
-        <option value="{{ y }}" {% if y == current_year %}selected{% endif %}>{{ y }}</option>
-        {% endfor %}
-      </select>
-      <a href="{% url 'sales-report-document' %}" target="_blank"
-         class="font-medium inline-flex items-center gap-1 rounded-default whitespace-nowrap px-3 py-2 text-sm border border-transparent bg-primary-600 text-white hover:bg-primary-600/80">
-        <span class="material-symbols-outlined text-sm -ml-0.5">picture_as_pdf</span>
-        {% trans "Export as PDF" %}
-      </a>
-    </div>
+    <a id="exportPdf" href="{% url 'sales-report-document' %}" target="_blank"
+       class="font-medium inline-flex items-center gap-1 rounded-default whitespace-nowrap px-3 py-2 text-sm border border-transparent bg-primary-600 text-white hover:bg-primary-600/80">
+      <span class="material-symbols-outlined text-sm -ml-0.5">picture_as_pdf</span>
+      {% trans "Export as PDF" %}
+    </a>
   </div>
 
-  <!-- KPI Cards -->
-  <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-    <div class="bg-white dark:bg-base-900 border border-base-200 dark:border-base-800 rounded-default shadow-xs p-5">
-      <p class="text-xs font-semibold uppercase text-font-subtle-light dark:text-font-subtle-dark mb-1.5">{% trans "Total Revenue" %}</p>
-      <p id="totalRevenue" class="text-2xl font-bold text-font-important-light dark:text-font-important-dark m-0">—</p>
+  <!-- Filters -->
+  <div class="bg-white dark:bg-base-900 border border-base-200 dark:border-base-800 rounded-default shadow-xs p-5 flex flex-col gap-4">
+    <div id="presets" class="flex items-center gap-2 flex-wrap" role="group" aria-label="{% trans 'Quick date ranges' %}">
+      <button type="button" class="sr-chip" data-preset="today">{% trans "Today" %}</button>
+      <button type="button" class="sr-chip" data-preset="yesterday">{% trans "Yesterday" %}</button>
+      <button type="button" class="sr-chip" data-preset="7d">{% trans "Last 7 days" %}</button>
+      <button type="button" class="sr-chip" data-preset="30d">{% trans "Last 30 days" %}</button>
+      <button type="button" class="sr-chip" data-preset="month">{% trans "This month" %}</button>
+      <button type="button" class="sr-chip" data-preset="lastmonth">{% trans "Last month" %}</button>
+      <button type="button" class="sr-chip" data-preset="year">{% trans "This year" %}</button>
     </div>
-    <div class="bg-white dark:bg-base-900 border border-base-200 dark:border-base-800 rounded-default shadow-xs p-5">
-      <p class="text-xs font-semibold uppercase text-font-subtle-light dark:text-font-subtle-dark mb-1.5">{% trans "Total Orders" %}</p>
-      <p id="totalOrders" class="text-2xl font-bold text-font-important-light dark:text-font-important-dark m-0">—</p>
+
+    <div class="flex items-end gap-4 flex-wrap">
+      <div>
+        <label for="dateFrom" class="block text-xs font-semibold uppercase text-font-subtle-light dark:text-font-subtle-dark mb-1">{% trans "From" %}</label>
+        <input type="date" id="dateFrom" value="{{ params.date_from|date:'Y-m-d' }}" max="{% now 'Y-m-d' %}"
+          class="sr-input border-base-200 bg-white font-medium rounded-default shadow-xs text-font-default-light text-sm px-3 py-2 focus:outline-2 focus:-outline-offset-2 focus:outline-primary-600 dark:bg-base-900 dark:border-base-700 dark:text-font-default-dark">
+      </div>
+      <div>
+        <label for="dateTo" class="block text-xs font-semibold uppercase text-font-subtle-light dark:text-font-subtle-dark mb-1">{% trans "To" %}</label>
+        <input type="date" id="dateTo" value="{{ params.date_to|date:'Y-m-d' }}" max="{% now 'Y-m-d' %}"
+          class="sr-input border-base-200 bg-white font-medium rounded-default shadow-xs text-font-default-light text-sm px-3 py-2 focus:outline-2 focus:-outline-offset-2 focus:outline-primary-600 dark:bg-base-900 dark:border-base-700 dark:text-font-default-dark">
+      </div>
+      <div>
+        <label for="granularity" class="block text-xs font-semibold uppercase text-font-subtle-light dark:text-font-subtle-dark mb-1">{% trans "Group by" %}</label>
+        <select id="granularity"
+          class="sr-input border-base-200 bg-white font-medium rounded-default shadow-xs text-font-default-light text-sm px-3 py-2 focus:outline-2 focus:-outline-offset-2 focus:outline-primary-600 dark:bg-base-900 dark:border-base-700 dark:text-font-default-dark">
+          <option value="auto" {% if params.granularity_choice == 'auto' %}selected{% endif %}>{% trans "Auto" %}</option>
+          <option value="daily" {% if params.granularity_choice == 'daily' %}selected{% endif %}>{% trans "Daily" %}</option>
+          <option value="weekly" {% if params.granularity_choice == 'weekly' %}selected{% endif %}>{% trans "Weekly" %}</option>
+          <option value="monthly" {% if params.granularity_choice == 'monthly' %}selected{% endif %}>{% trans "Monthly" %}</option>
+        </select>
+      </div>
+      <div>
+        <span class="block text-xs font-semibold uppercase text-font-subtle-light dark:text-font-subtle-dark mb-1">{% trans "Order type" %}</span>
+        <div id="typeFilter" class="flex items-center gap-2 flex-wrap" role="group" aria-label="{% trans 'Order type' %}">
+          <button type="button" class="sr-chip" data-type="">{% trans "All" %}</button>
+          {% for key, label in order_types %}
+          <button type="button" class="sr-chip" data-type="{{ key }}">{{ label }}</button>
+          {% endfor %}
+        </div>
+      </div>
     </div>
-    <div class="bg-white dark:bg-base-900 border border-base-200 dark:border-base-800 rounded-default shadow-xs p-5">
-      <p class="text-xs font-semibold uppercase text-font-subtle-light dark:text-font-subtle-dark mb-1.5">{% trans "Items Sold" %}</p>
-      <p id="totalItems" class="text-2xl font-bold text-font-important-light dark:text-font-important-dark m-0">—</p>
-    </div>
-    <div class="bg-white dark:bg-base-900 border border-base-200 dark:border-base-800 rounded-default shadow-xs p-5">
-      <p class="text-xs font-semibold uppercase text-font-subtle-light dark:text-font-subtle-dark mb-1.5">{% trans "Avg Order Value" %}</p>
-      <p id="avgOrder" class="text-2xl font-bold text-font-important-light dark:text-font-important-dark m-0">—</p>
-    </div>
+
+    <p id="rangeNote" class="text-xs text-font-subtle-light dark:text-font-subtle-dark m-0">&nbsp;</p>
   </div>
 
-  <!-- Revenue Chart -->
-  <div class="bg-white dark:bg-base-900 border border-base-200 dark:border-base-800 rounded-default shadow-xs p-6">
-    <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
-      <p class="font-semibold text-[15px] text-font-important-light dark:text-font-important-dark m-0">{% trans "Revenue Over Time" %}</p>
-      <p class="text-xs text-font-subtle-light dark:text-font-subtle-dark m-0">{% trans "Daily order count" %}</p>
-    </div>
-    <canvas id="revenueChart" height="90"></canvas>
+  <div id="srError" hidden
+       class="border border-red-200 bg-red-50 text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-400 rounded-default px-4 py-3 text-sm flex items-center justify-between gap-3">
+    <span id="srErrorText"></span>
+    <button type="button" id="srRetry" class="sr-chip">{% trans "Try again" %}</button>
   </div>
 
-  <!-- Top Products + Top Categories -->
-  <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-    <div class="bg-white dark:bg-base-900 border border-base-200 dark:border-base-800 rounded-default shadow-xs p-6 overflow-x-auto">
-      <p class="font-semibold text-[15px] text-font-important-light dark:text-font-important-dark mb-4">{% trans "Top Products" %}</p>
-      <table class="w-full text-sm">
-        <thead>
-          <tr class="border-b border-base-200 dark:border-base-800">
-            <th class="text-left font-semibold text-xs uppercase text-font-subtle-light dark:text-font-subtle-dark px-3 py-2">{% trans "Product" %}</th>
-            <th class="text-right font-semibold text-xs uppercase text-font-subtle-light dark:text-font-subtle-dark px-3 py-2">{% trans "Sold" %}</th>
-            <th class="text-right font-semibold text-xs uppercase text-font-subtle-light dark:text-font-subtle-dark px-3 py-2">{% trans "Revenue" %}</th>
-          </tr>
-        </thead>
-        <tbody id="topProductsTable"></tbody>
-      </table>
+  <div id="srContent" class="flex flex-col gap-6">
+
+    <!-- KPI Cards -->
+    <div>
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div class="bg-white dark:bg-base-900 border border-base-200 dark:border-base-800 rounded-default shadow-xs p-5">
+          <p class="text-xs font-semibold uppercase text-font-subtle-light dark:text-font-subtle-dark mb-1.5">{% trans "Total Sales" %}</p>
+          <p id="totalRevenue" class="text-2xl font-bold text-font-important-light dark:text-font-important-dark m-0">—</p>
+          <p class="text-xs text-font-subtle-light dark:text-font-subtle-dark mt-2 mb-0"><span id="dSales"></span> <span id="pSales"></span></p>
+        </div>
+        <div class="bg-white dark:bg-base-900 border border-base-200 dark:border-base-800 rounded-default shadow-xs p-5">
+          <p class="text-xs font-semibold uppercase text-font-subtle-light dark:text-font-subtle-dark mb-1.5">{% trans "Orders" %}</p>
+          <p id="totalOrders" class="text-2xl font-bold text-font-important-light dark:text-font-important-dark m-0">—</p>
+          <p class="text-xs text-font-subtle-light dark:text-font-subtle-dark mt-2 mb-0"><span id="dOrders"></span> <span id="pOrders"></span></p>
+        </div>
+        <div class="bg-white dark:bg-base-900 border border-base-200 dark:border-base-800 rounded-default shadow-xs p-5">
+          <p class="text-xs font-semibold uppercase text-font-subtle-light dark:text-font-subtle-dark mb-1.5">{% trans "Items Sold" %}</p>
+          <p id="totalItems" class="text-2xl font-bold text-font-important-light dark:text-font-important-dark m-0">—</p>
+          <p class="text-xs text-font-subtle-light dark:text-font-subtle-dark mt-2 mb-0"><span id="dItems"></span> <span id="pItems"></span></p>
+        </div>
+        <div class="bg-white dark:bg-base-900 border border-base-200 dark:border-base-800 rounded-default shadow-xs p-5">
+          <p class="text-xs font-semibold uppercase text-font-subtle-light dark:text-font-subtle-dark mb-1.5">{% trans "Avg Order Value" %}</p>
+          <p id="avgOrder" class="text-2xl font-bold text-font-important-light dark:text-font-important-dark m-0">—</p>
+          <p class="text-xs text-font-subtle-light dark:text-font-subtle-dark mt-2 mb-0"><span id="dAvg"></span> <span id="pAvg"></span></p>
+        </div>
+      </div>
+      <p id="kpiExtras" class="text-xs text-font-subtle-light dark:text-font-subtle-dark mt-3 mb-0"></p>
     </div>
 
+    <!-- Sales by Order Type -->
+    <div>
+      <p class="font-semibold text-[15px] text-font-important-light dark:text-font-important-dark mb-3">{% trans "Sales by Order Type" %}</p>
+      <div id="typeCards" class="sr-cards"></div>
+    </div>
+
+    <!-- Sales Over Time -->
     <div class="bg-white dark:bg-base-900 border border-base-200 dark:border-base-800 rounded-default shadow-xs p-6">
-      <p class="font-semibold text-[15px] text-font-important-light dark:text-font-important-dark mb-4">{% trans "Top Categories" %}</p>
-      <canvas id="categoryChart" height="90"></canvas>
+      <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
+        <p class="font-semibold text-[15px] text-font-important-light dark:text-font-important-dark m-0">{% trans "Sales Over Time" %}</p>
+        <p id="timeSubtitle" class="text-xs text-font-subtle-light dark:text-font-subtle-dark m-0"></p>
+      </div>
+      <div class="sr-chart">
+        <canvas id="revenueChart"></canvas>
+        <p id="timeEmpty" hidden class="sr-empty text-sm text-font-subtle-light dark:text-font-subtle-dark m-0">{% trans "No sales in this period" %}</p>
+      </div>
     </div>
-  </div>
 
-  <!-- Orders by Status -->
-  <div class="bg-white dark:bg-base-900 border border-base-200 dark:border-base-800 rounded-default shadow-xs p-6">
-    <p class="font-semibold text-[15px] text-font-important-light dark:text-font-important-dark mb-4">{% trans "Orders by Status" %}</p>
-    <div id="statusBars" class="flex flex-col gap-3"></div>
-  </div>
-
-  <!-- Product Performance -->
-  <div class="bg-white dark:bg-base-900 border border-base-200 dark:border-base-800 rounded-default shadow-xs p-6">
-    <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
-      <p class="font-semibold text-[15px] text-font-important-light dark:text-font-important-dark m-0">{% trans "Product Performance" %}</p>
-      <span id="productCount" class="text-xs text-font-subtle-light dark:text-font-subtle-dark"></span>
+    <!-- Performance Record -->
+    <div class="bg-white dark:bg-base-900 border border-base-200 dark:border-base-800 rounded-default shadow-xs p-6">
+      <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+        <p class="font-semibold text-[15px] text-font-important-light dark:text-font-important-dark m-0">{% trans "Performance Record" %}</p>
+        <p id="recordSubtitle" class="text-xs text-font-subtle-light dark:text-font-subtle-dark m-0"></p>
+      </div>
+      <div class="sr-scroll border border-base-200 dark:border-base-800 rounded-default">
+        <table class="w-full text-sm">
+          <thead>
+            <tr id="recordHead" class="border-b border-base-200 dark:border-base-800 text-font-subtle-light dark:text-font-subtle-dark"></tr>
+          </thead>
+          <tbody id="recordBody"></tbody>
+          <tfoot id="recordFoot"></tfoot>
+        </table>
+      </div>
     </div>
-    <input
-      id="productSearch"
-      type="text"
-      placeholder="{% trans 'Search products...' %}"
-      oninput="filterProducts()"
-      class="border border-base-200 bg-white font-medium rounded-default shadow-xs text-font-default-light text-sm px-3 py-2 mb-4 w-full max-w-sm focus:outline-2 focus:-outline-offset-2 focus:outline-primary-600 dark:bg-base-900 dark:border-base-700 dark:text-font-default-dark"
-    />
-    <div class="overflow-x-auto">
-      <table class="w-full text-sm">
-        <thead>
-          <tr class="border-b border-base-200 dark:border-base-800">
-            <th class="text-left font-semibold text-xs uppercase text-font-subtle-light dark:text-font-subtle-dark px-3 py-2 whitespace-nowrap">{% trans "Product" %}</th>
-            <th class="text-left font-semibold text-xs uppercase text-font-subtle-light dark:text-font-subtle-dark px-3 py-2 whitespace-nowrap">{% trans "Category" %}</th>
-            <th class="text-right font-semibold text-xs uppercase text-font-subtle-light dark:text-font-subtle-dark px-3 py-2 whitespace-nowrap">{% trans "Price" %}</th>
-            <th class="text-right font-semibold text-xs uppercase text-font-subtle-light dark:text-font-subtle-dark px-3 py-2 whitespace-nowrap">{% trans "Sold" %}</th>
-            <th class="text-right font-semibold text-xs uppercase text-font-subtle-light dark:text-font-subtle-dark px-3 py-2 whitespace-nowrap">{% trans "Revenue" %}</th>
-            <th class="text-center font-semibold text-xs uppercase text-font-subtle-light dark:text-font-subtle-dark px-3 py-2 whitespace-nowrap">{% trans "Rating" %}</th>
-            <th class="text-left font-semibold text-xs uppercase text-font-subtle-light dark:text-font-subtle-dark px-3 py-2 whitespace-nowrap">{% trans "Performance" %}</th>
-          </tr>
-        </thead>
-        <tbody id="productPerformanceTable"></tbody>
-      </table>
-    </div>
-  </div>
 
+    <!-- Top sellers per order type -->
+    <div>
+      <p class="font-semibold text-[15px] text-font-important-light dark:text-font-important-dark mb-3">{% trans "Top Sellers by Order Type" %}</p>
+      <div id="topByType" class="sr-cards"></div>
+    </div>
+
+    <!-- Top Products + Top Categories -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div class="bg-white dark:bg-base-900 border border-base-200 dark:border-base-800 rounded-default shadow-xs p-6 overflow-x-auto">
+        <p class="font-semibold text-[15px] text-font-important-light dark:text-font-important-dark mb-4">{% trans "Top Products" %}</p>
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="border-b border-base-200 dark:border-base-800">
+              <th class="text-left font-semibold text-xs uppercase text-font-subtle-light dark:text-font-subtle-dark px-3 py-2">{% trans "Product" %}</th>
+              <th class="text-right font-semibold text-xs uppercase text-font-subtle-light dark:text-font-subtle-dark px-3 py-2">{% trans "Sold" %}</th>
+              <th class="text-right font-semibold text-xs uppercase text-font-subtle-light dark:text-font-subtle-dark px-3 py-2">{% trans "Sales" %}</th>
+            </tr>
+          </thead>
+          <tbody id="topProductsTable"></tbody>
+        </table>
+      </div>
+
+      <div class="bg-white dark:bg-base-900 border border-base-200 dark:border-base-800 rounded-default shadow-xs p-6">
+        <p class="font-semibold text-[15px] text-font-important-light dark:text-font-important-dark mb-4">{% trans "Sales by Category" %}</p>
+        <canvas id="categoryChart" height="90"></canvas>
+        <p id="categoryEmpty" hidden class="text-sm text-center text-font-subtle-light dark:text-font-subtle-dark py-8 m-0">{% trans "No data yet" %}</p>
+      </div>
+    </div>
+
+    <!-- Orders by Status + Payment Methods -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div class="bg-white dark:bg-base-900 border border-base-200 dark:border-base-800 rounded-default shadow-xs p-6">
+        <p class="font-semibold text-[15px] text-font-important-light dark:text-font-important-dark mb-4">{% trans "Orders by Status" %}</p>
+        <div id="statusBars" class="flex flex-col gap-3"></div>
+      </div>
+      <div class="bg-white dark:bg-base-900 border border-base-200 dark:border-base-800 rounded-default shadow-xs p-6">
+        <p class="font-semibold text-[15px] text-font-important-light dark:text-font-important-dark mb-4">{% trans "Payment Methods" %}</p>
+        <div id="paymentBars" class="flex flex-col gap-3"></div>
+      </div>
+    </div>
+
+    <!-- Product Performance -->
+    <div class="bg-white dark:bg-base-900 border border-base-200 dark:border-base-800 rounded-default shadow-xs p-6">
+      <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+        <p class="font-semibold text-[15px] text-font-important-light dark:text-font-important-dark m-0">{% trans "Product Performance" %}</p>
+        <span id="productCount" class="text-xs text-font-subtle-light dark:text-font-subtle-dark"></span>
+      </div>
+      <input
+        id="productSearch"
+        type="text"
+        placeholder="{% trans 'Search products...' %}"
+        class="sr-input border-base-200 bg-white font-medium rounded-default shadow-xs text-font-default-light text-sm px-3 py-2 mb-4 w-full max-w-sm focus:outline-2 focus:-outline-offset-2 focus:outline-primary-600 dark:bg-base-900 dark:border-base-700 dark:text-font-default-dark"
+      />
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="border-b border-base-200 dark:border-base-800">
+              <th class="text-left font-semibold text-xs uppercase text-font-subtle-light dark:text-font-subtle-dark px-3 py-2 whitespace-nowrap">{% trans "Product" %}</th>
+              <th class="text-left font-semibold text-xs uppercase text-font-subtle-light dark:text-font-subtle-dark px-3 py-2 whitespace-nowrap">{% trans "Category" %}</th>
+              <th class="text-right font-semibold text-xs uppercase text-font-subtle-light dark:text-font-subtle-dark px-3 py-2 whitespace-nowrap" title="{% trans 'What it actually sold for in this period, from the order records. Later price changes do not affect it.' %}">{% trans "Avg. Price" %}</th>
+              <th class="text-right font-semibold text-xs uppercase text-font-subtle-light dark:text-font-subtle-dark px-3 py-2 whitespace-nowrap">{% trans "Sold" %}</th>
+              <th class="text-right font-semibold text-xs uppercase text-font-subtle-light dark:text-font-subtle-dark px-3 py-2 whitespace-nowrap">{% trans "Sales" %}</th>
+              <th class="text-center font-semibold text-xs uppercase text-font-subtle-light dark:text-font-subtle-dark px-3 py-2 whitespace-nowrap">{% trans "Rating" %}</th>
+              <th class="text-left font-semibold text-xs uppercase text-font-subtle-light dark:text-font-subtle-dark px-3 py-2 whitespace-nowrap">{% trans "Performance" %}</th>
+            </tr>
+          </thead>
+          <tbody id="productPerformanceTable"></tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
 </div>
 
 <script>
-  let revenueChart = null
+(function () {
+  const DATA_URL   = "{% url 'sales-report-data' %}"
+  const EXPORT_URL = "{% url 'sales-report-document' %}"
+  const TODAY      = "{% now 'Y-m-d' %}"
+  const TYPE_COLORS = { dine_in: '#6f4e37', pickup: '#d4a24c', regular: '#5b8c85' }
+  const FALLBACK_COLORS = ['#8B5E3C', '#a0785a', '#b8976e']
+  const STATUS_VARIANT = { pending: 'bg-orange-400', confirmed: 'bg-blue-400', delivered: 'bg-green-400', cancelled: 'bg-red-400' }
+  const $ = (id) => document.getElementById(id)
+
+  const state = {
+    orderType: "{{ params.order_type }}",
+  }
+  let lastData = null
+  let controller = null
+  let timeChart = null
   let categoryChart = null
 
-  const isDark = () => document.documentElement.classList.contains('dark')
-  const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+  // ─── helpers ────────────────────────────────────────────────────────────────
+  const peso = (n) => '₱' + Number(n || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  const num  = (n) => Number(n || 0).toLocaleString('en-PH')
+  const esc  = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
+  const isDark    = () => document.documentElement.classList.contains('dark')
+  const cssVar    = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim()
   const gridColor = () => cssVar(isDark() ? '--color-base-700' : '--color-base-200')
   const tickColor = () => cssVar(isDark() ? '--color-base-400' : '--color-base-500')
+  const typeColor = (key, i) => TYPE_COLORS[key] || FALLBACK_COLORS[i % FALLBACK_COLORS.length]
 
-  const STATUS_VARIANT = {
-    pending:    'bg-orange-400',
-    confirmed:  'bg-blue-400',
-    processing: 'bg-primary-500',
-    delivered:  'bg-green-400',
-    cancelled:  'bg-red-400',
+  const parseISO = (s) => { const [y, m, d] = s.split('-').map(Number); return new Date(Date.UTC(y, m - 1, d)) }
+  const toISO    = (dt) => dt.toISOString().slice(0, 10)
+  const addDays  = (iso, n) => { const dt = parseISO(iso); dt.setUTCDate(dt.getUTCDate() + n); return toISO(dt) }
+  const fmtDate  = (iso) => parseISO(iso).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })
+
+  function delta(pct, current, previous) {
+    if (pct === null || pct === undefined) {
+      if (current > 0 && !previous) return '<span class="sr-delta sr-delta--new" title="Nothing to compare with in the previous period">New</span>'
+      return '<span class="sr-delta sr-delta--none" title="Nothing to compare with in the previous period">—</span>'
+    }
+    const cls = pct > 0 ? 'up' : pct < 0 ? 'down' : 'flat'
+    const arrow = pct > 0 ? '▲' : pct < 0 ? '▼' : '•'
+    return `<span class="sr-delta sr-delta--${cls}">${arrow} ${Math.abs(pct).toFixed(1)}%</span>`
   }
 
-  async function loadReport() {
-    const period = document.getElementById('periodFilter').value
-    const year   = document.getElementById('yearFilter').value
+  // ─── filters ────────────────────────────────────────────────────────────────
+  function presetRange(name) {
+    const t = TODAY
+    const [y, m] = t.split('-').map(Number)
+    const firstOfMonth = `${y}-${String(m).padStart(2, '0')}-01`
+    switch (name) {
+      case 'today':     return [t, t]
+      case 'yesterday': return [addDays(t, -1), addDays(t, -1)]
+      case '7d':        return [addDays(t, -6), t]
+      case '30d':       return [addDays(t, -29), t]
+      case 'month':     return [firstOfMonth, t]
+      case 'lastmonth': { const end = addDays(firstOfMonth, -1); return [end.slice(0, 8) + '01', end] }
+      case 'year':      return [`${y}-01-01`, t]
+    }
+  }
 
-    const res  = await fetch(`/api/reports/sales/?period=${period}&year=${year}`, {
-      headers: { 'X-CSRFToken': '{{ csrf_token }}' },
-      credentials: 'include',
+  function syncFilterButtons() {
+    const from = $('dateFrom').value, to = $('dateTo').value
+    document.querySelectorAll('#presets [data-preset]').forEach((b) => {
+      const r = presetRange(b.dataset.preset)
+      b.setAttribute('aria-pressed', r && r[0] === from && r[1] === to ? 'true' : 'false')
     })
-    const data = await res.json()
+    document.querySelectorAll('#typeFilter [data-type]').forEach((b) => {
+      b.setAttribute('aria-pressed', b.dataset.type === state.orderType ? 'true' : 'false')
+    })
+  }
 
-    // KPIs
-    document.getElementById('totalRevenue').textContent = `₱${parseFloat(data.summary.total_revenue).toLocaleString('en-PH', {minimumFractionDigits: 2})}`
-    document.getElementById('totalOrders').textContent  = data.summary.total_orders.toLocaleString()
-    document.getElementById('totalItems').textContent   = data.summary.total_items.toLocaleString()
-    document.getElementById('avgOrder').textContent     = `₱${parseFloat(data.summary.avg_order_value).toFixed(2)}`
+  function queryString() {
+    const qs = new URLSearchParams({ date_from: $('dateFrom').value, date_to: $('dateTo').value, granularity: $('granularity').value })
+    if (state.orderType) qs.set('order_type', state.orderType)
+    return qs
+  }
 
-    // Revenue Chart
-    if (revenueChart) revenueChart.destroy()
-    revenueChart = new Chart(document.getElementById('revenueChart').getContext('2d'), {
+  async function load() {
+    if (controller) controller.abort()
+    controller = new AbortController()
+    const qs = queryString()
+    history.replaceState(null, '', '?' + qs)
+    $('srContent').classList.add('sr-loading')
+    $('srError').hidden = true
+    try {
+      const res = await fetch(DATA_URL + '?' + qs, { credentials: 'same-origin', signal: controller.signal, headers: { Accept: 'application/json' } })
+      if (!res.ok || !(res.headers.get('content-type') || '').includes('json')) {
+        throw new Error(res.status === 200 || res.redirected ? 'Your session may have expired — refresh the page and sign in again.' : `The report could not be loaded (error ${res.status}).`)
+      }
+      render(await res.json())
+    } catch (err) {
+      if (err.name === 'AbortError') return
+      $('srErrorText').textContent = err.message || 'The report could not be loaded.'
+      $('srError').hidden = false
+    } finally {
+      if (!controller.signal.aborted) $('srContent').classList.remove('sr-loading')
+    }
+  }
+
+  // ─── render ─────────────────────────────────────────────────────────────────
+  function render(data) {
+    lastData = data
+    // The server may have swapped or clamped the dates — show what it actually used.
+    $('dateFrom').value = data.meta.date_from
+    $('dateTo').value = data.meta.date_to
+    state.orderType = data.meta.order_type
+    syncFilterButtons()
+
+    const m = data.meta
+    const groupNote = $('granularity').value === 'auto' ? `grouped ${m.granularity} (auto)` : `grouped ${m.granularity}`
+    $('rangeNote').textContent =
+      `${fmtDate(m.date_from)} – ${fmtDate(m.date_to)} · ${m.days} day${m.days === 1 ? '' : 's'} · ${groupNote} · ` +
+      `compared with ${fmtDate(m.previous_from)} – ${fmtDate(m.previous_to)} · dates in ${m.timezone} time · cancelled orders are not counted as sales`
+    $('exportPdf').href = EXPORT_URL + '?' + queryString()
+
+    renderKpis(data)
+    renderTypeCards(data)
+    renderTimeChart(data)
+    renderRecord(data)
+    renderTopByType(data)
+    renderTopProducts(data)
+    renderCategories(data)
+    renderStatus(data)
+    renderPayments(data)
+    window._productData = data.product_performance || []
+    filterProducts()
+  }
+
+  function renderKpis(data) {
+    const s = data.summary, p = data.previous, c = data.comparison
+    $('totalRevenue').textContent = peso(s.sales)
+    $('totalOrders').textContent  = num(s.orders)
+    $('totalItems').textContent   = num(s.items)
+    $('avgOrder').textContent     = peso(s.avg_order)
+    $('dSales').innerHTML  = delta(c.sales, s.sales, p.sales);          $('pSales').textContent  = `was ${peso(p.sales)}`
+    $('dOrders').innerHTML = delta(c.orders, s.orders, p.orders);       $('pOrders').textContent = `was ${num(p.orders)}`
+    $('dItems').innerHTML  = delta(c.items, s.items, p.items);          $('pItems').textContent  = `was ${num(p.items)}`
+    $('dAvg').innerHTML    = delta(c.avg_order, s.avg_order, p.avg_order); $('pAvg').textContent = `was ${peso(p.avg_order)}`
+    const bits = [
+      `Delivery fees ${peso(s.delivery_fees)}`,
+      `Loyalty discounts −${peso(s.discounts)}`,
+      `Total collected ${peso(s.collected)}`,
+      `Cancelled orders ${num(s.cancelled_orders)} (not counted)`,
+    ]
+    $('kpiExtras').textContent = bits.join('  ·  ')
+  }
+
+  function renderTypeCards(data) {
+    $('typeCards').innerHTML = data.by_type.map((t, i) => `
+      <div class="bg-white dark:bg-base-900 border border-base-200 dark:border-base-800 rounded-default shadow-xs p-5">
+        <div class="flex items-center justify-between gap-2 mb-2">
+          <span class="flex items-center gap-2 text-sm font-semibold text-font-important-light dark:text-font-important-dark">
+            <span class="sr-dot" style="background:${typeColor(t.key, i)}"></span>${esc(t.label)}
+          </span>
+          ${delta(t.change_pct, t.sales, t.previous_sales)}
+        </div>
+        <p class="text-2xl font-bold text-font-important-light dark:text-font-important-dark m-0">${peso(t.sales)}</p>
+        <div class="flex items-center gap-2 mt-3">
+          <div class="flex-1 h-2 bg-base-100 dark:bg-base-800 rounded-full overflow-hidden">
+            <div class="h-full rounded-full" style="width:${t.share_pct}%;background:${typeColor(t.key, i)}"></div>
+          </div>
+          <span class="text-xs font-semibold text-font-default-light dark:text-font-default-dark">${t.share_pct.toFixed(1)}%</span>
+        </div>
+        <p class="text-xs text-font-subtle-light dark:text-font-subtle-dark mt-3 mb-0">
+          ${num(t.orders)} order${t.orders === 1 ? '' : 's'} · ${num(t.items)} item${t.items === 1 ? '' : 's'} · avg ${peso(t.avg_order)}
+        </p>
+        ${t.key === 'regular' ? `<p class="text-xs text-font-subtle-light dark:text-font-subtle-dark mt-1 mb-0">Delivery fees collected: ${peso(t.delivery_fees)}</p>` : ''}
+      </div>`).join('')
+  }
+
+  function renderTimeChart(data) {
+    const series = data.series
+    const total = series.reduce((sum, r) => sum + r.sales, 0)
+    $('timeEmpty').hidden = total > 0
+    $('timeSubtitle').textContent = `${data.meta.granularity.charAt(0).toUpperCase() + data.meta.granularity.slice(1)} · ${data.by_type.length > 1 ? 'stacked by order type' : data.by_type[0].label}`
+    if (timeChart) timeChart.destroy()
+    timeChart = new Chart($('revenueChart').getContext('2d'), {
       type: 'bar',
       data: {
-        labels:   data.revenue_by_period.map(d => d.period),
-        datasets: [{
-          label: 'Revenue',
-          data:  data.revenue_by_period.map(d => d.revenue),
-          backgroundColor: cssVar('--color-primary-600'),
-          borderRadius: 4,
-          maxBarThickness: 40,
-        }]
+        labels: series.map((r) => r.label),
+        datasets: data.by_type.map((t, i) => ({
+          label: t.label,
+          data: series.map((r) => r.by_type[t.key] || 0),
+          backgroundColor: typeColor(t.key, i),
+          borderRadius: 3,
+          maxBarThickness: 42,
+          stack: 'sales',
+        })),
       },
       options: {
         responsive: true,
-        plugins: { legend: { display: false } },
-        scales: {
-          y: { beginAtZero: true, grid: { color: gridColor() }, ticks: { color: tickColor() } },
-          x: { grid: { display: false }, ticks: { color: tickColor() } },
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { display: data.by_type.length > 1, position: 'bottom', labels: { color: tickColor(), boxWidth: 10, font: { size: 11 } } },
+          tooltip: {
+            callbacks: {
+              title: (items) => { const r = series[items[0].dataIndex]; return (r.weekday ? r.weekday + ', ' : '') + r.label },
+              label: (ctx) => `${ctx.dataset.label}: ${peso(ctx.parsed.y)}`,
+              footer: (items) => { const r = series[items[0].dataIndex]; return `Total ${peso(r.sales)} · ${num(r.orders)} order${r.orders === 1 ? '' : 's'}` },
+            },
+          },
         },
-      }
-    })
-
-    // Top Products Table
-    const tbody = document.getElementById('topProductsTable')
-    tbody.innerHTML = data.top_products.map(p => `
-      <tr class="border-b border-base-200 dark:border-base-800 last:border-b-0">
-        <td class="px-3 py-2.5 text-font-default-light dark:text-font-default-dark">${p.product__name}</td>
-        <td class="px-3 py-2.5 text-right text-font-default-light dark:text-font-default-dark">${p.total_sold}</td>
-        <td class="px-3 py-2.5 text-right font-semibold text-font-important-light dark:text-font-important-dark">₱${parseFloat(p.total_revenue).toFixed(2)}</td>
-      </tr>
-    `).join('') || `<tr><td colspan="3" class="text-center py-8 text-font-subtle-light dark:text-font-subtle-dark">No data yet</td></tr>`
-
-    // Category Chart
-    if (categoryChart) categoryChart.destroy()
-    categoryChart = new Chart(document.getElementById('categoryChart').getContext('2d'), {
-      type: 'doughnut',
-      data: {
-        labels:   data.top_categories.map(c => c.product__category__name),
-        datasets: [{
-          data:            data.top_categories.map(c => c.total_revenue),
-          backgroundColor: ['#6f4e37', '#C4A882', '#a0785a', '#d4b896', '#8B5E3C', '#f0ddc8'],
-          borderWidth: 2,
-          borderColor: 'transparent',
-        }]
+        scales: {
+          // With nothing sold Chart.js would auto-scale an all-zero axis to ₱0–₱1 in decimals; give it a sane range instead.
+          y: { stacked: true, beginAtZero: true, suggestedMax: total > 0 ? undefined : 100, grid: { color: gridColor() }, ticks: { color: tickColor(), precision: 0, callback: (v) => '₱' + Number(v).toLocaleString('en-PH') } },
+          x: { stacked: true, grid: { display: false }, ticks: { color: tickColor(), maxRotation: 0, autoSkip: true } },
+        },
       },
-      options: {
-        responsive: true,
-        plugins: { legend: { position: 'bottom', labels: { font: { size: 11 }, color: tickColor() } } }
-      }
     })
-
-    // Orders by Status
-    const statusDiv = document.getElementById('statusBars')
-    const total = data.orders_by_status.reduce((s, o) => s + o.count, 0)
-    statusDiv.innerHTML = data.orders_by_status.map(o => `
-      <div class="flex items-center gap-3">
-        <span class="min-w-20 shrink-0 text-xs text-font-subtle-light dark:text-font-subtle-dark capitalize">${o.status}</span>
-        <div class="flex-1 h-2 bg-base-100 dark:bg-base-800 rounded-full overflow-hidden">
-          <div class="h-full rounded-full ${STATUS_VARIANT[o.status] || 'bg-base-400'}" style="width:${total ? (o.count/total*100) : 0}%"></div>
-        </div>
-        <span class="text-xs font-semibold text-font-default-light dark:text-font-default-dark w-8 text-right">${o.count}</span>
-      </div>
-    `).join('')
-
-    // Product Performance
-    window._productData = data.product_performance || []
-    renderProductTable(window._productData)
-    document.getElementById('productCount').textContent = `${window._productData.length} products`
   }
 
-  function renderProductTable(products) {
-    const maxRevenue = Math.max(...products.map(p => p.total_revenue), 1)
-    const tbody = document.getElementById('productPerformanceTable')
-    tbody.innerHTML = products.map(p => {
-      const pct      = Math.round((p.total_revenue / maxRevenue) * 100)
-      const barColor = pct >= 70 ? 'bg-green-500' : pct >= 40 ? 'bg-orange-500' : 'bg-primary-500'
-      const stars    = p.avg_rating
-        ? '★'.repeat(Math.round(p.avg_rating)) + '☆'.repeat(5 - Math.round(p.avg_rating))
-        : '—'
+  function renderRecord(data) {
+    const types = data.by_type
+    const th = (label, right) => `<th class="sr-th ${right ? 'text-right' : 'text-left'}">${label}</th>`
+    $('recordHead').innerHTML =
+      th('Period') + th('Orders', true) + th('Items', true) + th('Sales', true) + th('Avg order', true) +
+      (types.length > 1 ? types.map((t) => th(esc(t.label), true)).join('') : '') +
+      th('vs previous', true)
+    $('recordSubtitle').textContent = `${data.series.length} ${data.meta.granularity === 'daily' ? 'days' : data.meta.granularity === 'weekly' ? 'weeks' : 'months'} · best period highlighted · “vs previous” compares with the row above`
+    const td = (v, right) => `<td class="sr-td ${right ? 'text-right' : 'text-left'}">${v}</td>`
+    $('recordBody').innerHTML = data.series.map((r) => `
+      <tr class="border-b border-base-200 dark:border-base-800 last:border-b-0 ${r.is_best ? 'sr-best' : ''} ${r.orders === 0 ? 'sr-zero' : ''}">
+        ${td(`<span class="font-semibold text-font-important-light dark:text-font-important-dark">${esc(r.label)}</span>` +
+             (r.weekday ? ` <span class="text-font-subtle-light dark:text-font-subtle-dark">${r.weekday}</span>` : '') +
+             (r.is_best ? '<span class="sr-pill">BEST</span>' : ''))}
+        ${td(num(r.orders), true)}
+        ${td(num(r.items), true)}
+        ${td(`<span class="font-semibold text-font-important-light dark:text-font-important-dark">${peso(r.sales)}</span>`, true)}
+        ${td(r.orders ? peso(r.avg_order) : '—', true)}
+        ${types.length > 1 ? types.map((t) => td(r.by_type[t.key] ? peso(r.by_type[t.key]) : '—', true)).join('') : ''}
+        ${td(r.change_pct === null ? '<span class="sr-delta sr-delta--none">—</span>' : delta(r.change_pct, r.sales, 0), true)}
+      </tr>`).join('') || `<tr><td colspan="9" class="text-center py-8 text-font-subtle-light dark:text-font-subtle-dark">No data yet</td></tr>`
+    const s = data.summary
+    $('recordFoot').innerHTML = `
+      <tr class="border-t border-base-200 dark:border-base-700 font-semibold text-font-important-light dark:text-font-important-dark">
+        ${td('Total')}${td(num(s.orders), true)}${td(num(s.items), true)}${td(peso(s.sales), true)}${td(s.orders ? peso(s.avg_order) : '—', true)}
+        ${types.length > 1 ? types.map((t) => td(peso(t.sales), true)).join('') : ''}${td('', true)}
+      </tr>`
+  }
 
+  function renderTopByType(data) {
+    $('topByType').innerHTML = data.by_type.map((t, i) => `
+      <div class="bg-white dark:bg-base-900 border border-base-200 dark:border-base-800 rounded-default shadow-xs p-5">
+        <p class="flex items-center gap-2 text-sm font-semibold text-font-important-light dark:text-font-important-dark mb-3">
+          <span class="sr-dot" style="background:${typeColor(t.key, i)}"></span>${esc(t.label)}
+        </p>
+        ${t.top_products.length ? t.top_products.map((p, n) => `
+          <div class="flex items-center justify-between gap-3 py-1.5 border-b border-base-200 dark:border-base-800 last:border-b-0">
+            <span class="text-sm text-font-default-light dark:text-font-default-dark" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${n + 1}. ${esc(p.name)}</span>
+            <span class="text-xs text-font-subtle-light dark:text-font-subtle-dark whitespace-nowrap">${num(p.qty)} sold · <b class="text-font-important-light dark:text-font-important-dark">${peso(p.sales)}</b></span>
+          </div>`).join('')
+        : '<p class="text-xs text-font-subtle-light dark:text-font-subtle-dark m-0">No sales in this period</p>'}
+      </div>`).join('')
+  }
+
+  function renderTopProducts(data) {
+    $('topProductsTable').innerHTML = data.top_products.map((p) => `
+      <tr class="border-b border-base-200 dark:border-base-800 last:border-b-0">
+        <td class="px-3 py-2.5 text-font-default-light dark:text-font-default-dark">${esc(p.name)}</td>
+        <td class="px-3 py-2.5 text-right text-font-default-light dark:text-font-default-dark">${num(p.qty)}</td>
+        <td class="px-3 py-2.5 text-right font-semibold text-font-important-light dark:text-font-important-dark">${peso(p.sales)}</td>
+      </tr>`).join('') || `<tr><td colspan="3" class="text-center py-8 text-font-subtle-light dark:text-font-subtle-dark">No data yet</td></tr>`
+  }
+
+  function renderCategories(data) {
+    if (categoryChart) categoryChart.destroy()
+    const cats = data.categories
+    $('categoryEmpty').hidden = cats.length > 0
+    $('categoryChart').hidden = cats.length === 0
+    if (!cats.length) return
+    categoryChart = new Chart($('categoryChart').getContext('2d'), {
+      type: 'doughnut',
+      data: {
+        labels: cats.map((c) => c.name),
+        datasets: [{ data: cats.map((c) => c.sales), backgroundColor: ['#6f4e37', '#C4A882', '#a0785a', '#d4b896', '#8B5E3C', '#f0ddc8'], borderWidth: 2, borderColor: 'transparent' }],
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: { position: 'bottom', labels: { font: { size: 11 }, color: tickColor() } },
+          tooltip: { callbacks: { label: (ctx) => `${ctx.label}: ${peso(ctx.parsed)}` } },
+        },
+      },
+    })
+  }
+
+  function bars(rows, colorFn) {
+    const max = Math.max(...rows.map((r) => r.value), 0)
+    return rows.map((r) => `
+      <div class="flex items-center gap-3">
+        <span class="min-w-24 shrink-0 text-xs text-font-subtle-light dark:text-font-subtle-dark">${esc(r.label)}</span>
+        <div class="flex-1 h-2 bg-base-100 dark:bg-base-800 rounded-full overflow-hidden">
+          <div class="h-full rounded-full ${colorFn(r)}" style="width:${max ? r.value / max * 100 : 0}%"></div>
+        </div>
+        <span class="text-xs font-semibold text-font-default-light dark:text-font-default-dark text-right" style="min-width:5.5rem">${r.text}</span>
+      </div>`).join('')
+  }
+
+  function renderStatus(data) {
+    $('statusBars').innerHTML = bars(
+      data.status.map((s) => ({ label: s.label, value: s.count, text: num(s.count), status: s.status })),
+      (r) => STATUS_VARIANT[r.status] || 'bg-base-400',
+    )
+  }
+
+  function renderPayments(data) {
+    $('paymentBars').innerHTML = bars(
+      data.payment_methods.map((p) => ({ label: p.label, value: p.sales, text: `${peso(p.sales)} · ${num(p.orders)}` })),
+      () => 'bg-primary-500',
+    )
+  }
+
+  // ─── product performance ────────────────────────────────────────────────────
+  function renderProductTable(products) {
+    const maxRevenue = Math.max(...products.map((p) => p.total_revenue), 1)
+    $('productPerformanceTable').innerHTML = products.map((p) => {
+      const pct = Math.round((p.total_revenue / maxRevenue) * 100)
+      const barColor = pct >= 70 ? 'bg-green-500' : pct >= 40 ? 'bg-orange-500' : 'bg-primary-500'
+      const stars = p.avg_rating ? '★'.repeat(Math.round(p.avg_rating)) + '☆'.repeat(5 - Math.round(p.avg_rating)) : '—'
       return `
         <tr class="border-b border-base-200 dark:border-base-800 last:border-b-0">
-          <td class="px-3 py-2.5 font-semibold text-font-important-light dark:text-font-important-dark whitespace-nowrap">${p.name}</td>
-          <td class="px-3 py-2.5 text-font-subtle-light dark:text-font-subtle-dark whitespace-nowrap">${p.category}</td>
-          <td class="px-3 py-2.5 text-right text-font-default-light dark:text-font-default-dark whitespace-nowrap">₱${p.base_price.toFixed(2)}</td>
-          <td class="px-3 py-2.5 text-right font-semibold text-font-default-light dark:text-font-default-dark whitespace-nowrap">${p.total_sold}</td>
-          <td class="px-3 py-2.5 text-right font-semibold text-font-important-light dark:text-font-important-dark whitespace-nowrap">₱${p.total_revenue.toFixed(2)}</td>
-          <td class="px-3 py-2.5 text-center whitespace-nowrap ${p.avg_rating ? 'text-orange-700 dark:text-orange-400' : 'text-base-400'}">
-            ${p.avg_rating ? `${p.avg_rating} ${stars}` : '—'}
-          </td>
+          <td class="px-3 py-2.5 font-semibold text-font-important-light dark:text-font-important-dark whitespace-nowrap">${esc(p.name)}</td>
+          <td class="px-3 py-2.5 text-font-subtle-light dark:text-font-subtle-dark whitespace-nowrap">${esc(p.category)}</td>
+          <td class="px-3 py-2.5 text-right text-font-default-light dark:text-font-default-dark whitespace-nowrap">${peso(p.avg_price)}</td>
+          <td class="px-3 py-2.5 text-right font-semibold text-font-default-light dark:text-font-default-dark whitespace-nowrap">${num(p.total_sold)}</td>
+          <td class="px-3 py-2.5 text-right font-semibold text-font-important-light dark:text-font-important-dark whitespace-nowrap">${peso(p.total_revenue)}</td>
+          <td class="px-3 py-2.5 text-center whitespace-nowrap ${p.avg_rating ? 'text-orange-700 dark:text-orange-400' : 'text-base-400'}">${p.avg_rating ? `${p.avg_rating} ${stars}` : '—'}</td>
           <td class="px-3 py-2.5 min-w-20">
             <div class="flex items-center gap-2">
               <div class="flex-1 h-1.5 bg-base-100 dark:bg-base-800 rounded-full overflow-hidden">
@@ -258,21 +594,43 @@
               <span class="text-xs text-font-subtle-light dark:text-font-subtle-dark w-8">${pct}%</span>
             </div>
           </td>
-        </tr>
-      `
+        </tr>`
     }).join('') || '<tr><td colspan="7" class="text-center py-8 text-font-subtle-light dark:text-font-subtle-dark">No data yet</td></tr>'
   }
 
   function filterProducts() {
-    const query    = document.getElementById('productSearch').value.toLowerCase()
-    const filtered = (window._productData || []).filter(p =>
-      p.name.toLowerCase().includes(query) ||
-      p.category.toLowerCase().includes(query)
-    )
+    const query = $('productSearch').value.toLowerCase()
+    const all = window._productData || []
+    const filtered = all.filter((p) => p.name.toLowerCase().includes(query) || p.category.toLowerCase().includes(query))
     renderProductTable(filtered)
+    $('productCount').textContent = query ? `${filtered.length} of ${all.length} products` : `${all.length} product${all.length === 1 ? '' : 's'} sold`
   }
 
-  loadReport()
+  // ─── wiring ─────────────────────────────────────────────────────────────────
+  document.querySelectorAll('#presets [data-preset]').forEach((b) => b.addEventListener('click', () => {
+    const [from, to] = presetRange(b.dataset.preset)
+    $('dateFrom').value = from
+    $('dateTo').value = to
+    load()
+  }))
+  document.querySelectorAll('#typeFilter [data-type]').forEach((b) => b.addEventListener('click', () => {
+    state.orderType = b.dataset.type
+    syncFilterButtons()
+    load()
+  }))
+  $('dateFrom').addEventListener('change', load)
+  $('dateTo').addEventListener('change', load)
+  $('granularity').addEventListener('change', load)
+  $('productSearch').addEventListener('input', filterProducts)
+  $('srRetry').addEventListener('click', load)
+
+  // Charts read theme colors at draw time — redraw them if the theme is toggled.
+  new MutationObserver(() => { if (lastData) { renderTimeChart(lastData); renderCategories(lastData) } })
+    .observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
+
+  syncFilterButtons()
+  load()
+})()
 </script>
 
 {% endblock %}
