@@ -13,14 +13,25 @@
 // attached too. Standard pattern, see:
 // https://docs.djangoproject.com/en/stable/howto/csrf/#using-csrf-protection-with-ajax
 //
-// Both listeners are on `document`, not `document.body` — this script is
+// The listeners are on `document`, not `document.body` — this script is
 // loaded in <head> (see UNFOLD["SCRIPTS"]), which runs before <body> exists
 // yet, so `document.body` is still null at this point. Both events bubble
 // (submit is caught in the capture phase) all the way up to `document`.
+//
+// Guarded by online_shop/tests.py (AdminLoginAndCsrfTests, CsrfScriptGuardTests)
+// and, in a real browser, online_shop/test_stale_csrf_browser.py — if you
+// touch this file, run those.
 (function () {
   function csrfCookie() {
     var match = document.cookie.match(/(?:^|; )csrftoken=([^;]*)/)
     return match ? decodeURIComponent(match[1]) : null
+  }
+
+  function refreshTokens(form) {
+    var token = csrfCookie()
+    if (!token || !form || !form.querySelectorAll) return
+    var fields = form.querySelectorAll('input[name="csrfmiddlewaretoken"]')
+    for (var i = 0; i < fields.length; i++) fields[i].value = token
   }
 
   document.addEventListener('htmx:configRequest', function (event) {
@@ -35,10 +46,15 @@
     if (event.detail.verb !== 'get') event.detail.parameters['csrfmiddlewaretoken'] = token
   })
 
-  document.addEventListener('submit', function (event) {
-    var token = csrfCookie()
-    if (!token) return
-    var fields = event.target.querySelectorAll ? event.target.querySelectorAll('input[name="csrfmiddlewaretoken"]') : []
-    for (var i = 0; i < fields.length; i++) fields[i].value = token
-  }, true)
+  // Clicking a submit button / pressing Enter fires a `submit` event…
+  document.addEventListener('submit', function (event) { refreshTokens(event.target) }, true)
+
+  // …but form.submit() called from a script does not, so wrap that too —
+  // otherwise any code (ours, or a future Unfold upgrade) that submits a form
+  // that way would bring the stale-token 403 right back.
+  var nativeSubmit = HTMLFormElement.prototype.submit
+  HTMLFormElement.prototype.submit = function () {
+    refreshTokens(this)
+    return nativeSubmit.apply(this, arguments)
+  }
 })()

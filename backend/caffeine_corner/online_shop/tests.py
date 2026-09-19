@@ -1,6 +1,9 @@
+import os
 from decimal import Decimal
+from unittest import mock
 
 from django.contrib.auth import get_user_model
+from django.contrib.staticfiles import finders
 from django.test import Client, TestCase
 from django.urls import reverse
 from django.utils.crypto import get_random_string
@@ -209,3 +212,64 @@ class AdminLoginAndCsrfTests(TestCase):
         self.assertEqual(client.post(self.toggle_url(), {'status': 'confirmed', 'csrfmiddlewaretoken': secret}).status_code, 200)
         self.assertEqual(client.post(self.toggle_url(), {'status': 'delivered'}, HTTP_X_CSRFTOKEN=secret).status_code, 200)
         self.assertEqual(Order.objects.get(pk=self.order.pk).status, 'delivered')
+
+
+class CsrfScriptGuardTests(TestCase):
+    """
+    The stale-token fix lives in static/js/htmx-csrf.js. If that script stops
+    being loaded, or loses one of its hooks, the "403 CSRF token from POST
+    incorrect" comes straight back — so these trip on exactly that. What the
+    script actually *does* is checked in a real browser
+    (online_shop/test_stale_csrf_browser.py); these are the fast, always-on
+    part that needs no browser.
+    """
+
+    SCRIPT = 'js/htmx-csrf.js?v='        # loaded through _versioned_static() in settings
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.admin = User.objects.create_superuser('admin@example.com', 'pw')
+        cls.product = Product.objects.create(
+            name='Latte', description='Latte', category=Category.objects.create(name='Coffee'),
+            price=Decimal('100.00'), cost_price=Decimal('40.00'), sku='LAT-1', barcode='LAT-1',
+        )
+
+    def test_script_is_loaded_on_the_login_page(self):
+        self.assertContains(self.client.get(reverse('admin:login')), self.SCRIPT)
+
+    def test_script_is_loaded_on_every_admin_page_that_posts(self):
+        self.client.force_login(self.admin)
+        pages = [
+            reverse('admin:index'),
+            reverse('admin:online_shop_order_changelist'),        # HTMX toggles + bulk-action form
+            reverse('admin:online_shop_order_add'),
+            reverse('admin:online_shop_product_changelist'),
+            reverse('admin:online_shop_product_change', args=[self.product.pk]),
+            reverse('sales-report'),
+        ]
+        for url in pages:
+            with self.subTest(url=url):
+                self.assertContains(self.client.get(url), self.SCRIPT)
+
+    def test_script_keeps_the_hooks_that_fix_the_403(self):
+        source = open(finders.find('js/htmx-csrf.js'), encoding='utf-8').read()
+        for needle in (
+            'htmx:configRequest',                # HTMX requests (status/payment toggles, bell, quick adjust)
+            "'submit'",                          # normal forms: button click / Enter
+            'HTMLFormElement.prototype.submit',  # form.submit() called from a script
+            'csrfmiddlewaretoken',               # the hidden field that goes stale
+            'csrftoken',                         # the cookie the fresh value is read from
+        ):
+            with self.subTest(needle=needle):
+                self.assertIn(needle, source)
+
+    def test_script_url_changes_when_the_file_changes(self):
+        # otherwise a browser can keep running a cached, pre-fix copy
+        from caffeine_corner.settings import _versioned_static
+        url = _versioned_static('js/htmx-csrf.js')
+        with mock.patch.object(os.path, 'getmtime', return_value=111):
+            first = url(None)
+        with mock.patch.object(os.path, 'getmtime', return_value=222):
+            second = url(None)
+        self.assertTrue(first.endswith('js/htmx-csrf.js?v=111'), first)
+        self.assertTrue(second.endswith('js/htmx-csrf.js?v=222'), second)

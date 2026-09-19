@@ -250,6 +250,22 @@ FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://192.168.1.8:5173')
 # map falls back to Esri's (less detailed but key-free) street tiles.
 MAPTILER_KEY = os.getenv('MAPTILER_KEY', '')
 
+def _versioned_static(path):
+    """
+    static(path) + ?v=<file's mtime>. Without it the browser can keep running
+    a cached copy of an admin script long after it was fixed — e.g. the
+    stale-CSRF-token fix in js/htmx-csrf.js would not reach anyone until they
+    hard-refreshed. With it, any edit to the file changes the URL, so the
+    browser fetches the new version on its own.
+    """
+    def resolve(request):
+        from django.contrib.staticfiles import finders
+        found = finders.find(path)
+        version = int(os.path.getmtime(found)) if isinstance(found, str) else 0
+        return f"{static(path)}?v={version}"
+    return resolve
+
+
 UNFOLD = {
     "SITE_TITLE": "CAFFIENE CORNER",
     "SITE_HEADER": "CAFFIENE CORNER",
@@ -273,9 +289,9 @@ UNFOLD = {
     # by the inline status/payment toggles on the Orders list (see
     # OrderAdmin.show_status / show_payment_status).
     "SCRIPTS": [
-        lambda request: static("js/htmx-csrf.js"),
-        lambda request: static("js/notif-badge.js"),
-        lambda request: static("js/orderitem-price.js"),
+        _versioned_static("js/htmx-csrf.js"),
+        _versioned_static("js/notif-badge.js"),
+        _versioned_static("js/orderitem-price.js"),
     ],
     "COLORS": {
         "primary": {
