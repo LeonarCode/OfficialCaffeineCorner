@@ -1,14 +1,12 @@
+"""The Sales Report: the numbers, the performance record, the parameters, the pages and the PDF."""
 import datetime
 from decimal import Decimal
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
-from django.utils import timezone
 
-from inventory.sales_report import (
-    MAX_SPAN_DAYS, MIN_DATE, build_sales_report, parse_report_params,
-)
+from inventory.sales_report import MAX_SPAN_DAYS, MIN_DATE, build_sales_report, parse_report_params
 from online_shop.models import Category, Order, OrderItem, Product, Rating, TownZone
 
 User = get_user_model()

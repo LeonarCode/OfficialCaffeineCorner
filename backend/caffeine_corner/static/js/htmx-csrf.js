@@ -18,9 +18,10 @@
 // yet, so `document.body` is still null at this point. Both events bubble
 // (submit is caught in the capture phase) all the way up to `document`.
 //
-// Guarded by online_shop/tests.py (AdminLoginAndCsrfTests, CsrfScriptGuardTests)
-// and, in a real browser, online_shop/test_stale_csrf_browser.py — if you
-// touch this file, run those.
+// Guarded by tests/test_online_shop/test_admin_scripts.py (AdminLoginAndCsrfTests,
+// CsrfScriptGuardTests) and, in a real browser, by
+// tests/test_online_shop/test_stale_csrf_browser.py — if you touch this file,
+// run those.
 (function () {
   function csrfCookie() {
     var match = document.cookie.match(/(?:^|; )csrftoken=([^;]*)/)

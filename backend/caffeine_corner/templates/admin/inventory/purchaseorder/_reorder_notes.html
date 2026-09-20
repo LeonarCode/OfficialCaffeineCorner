@@ -1,0 +1,19 @@
+{% comment %}Why some low-stock items are not on the "to order" list — shown inside the banner.{% endcomment %}
+{% if reorder.on_order %}
+<p class="text-xs mt-1 opacity-90">
+  {{ reorder.on_order|length }} low item{{ reorder.on_order|length|pluralize }} already on an open purchase order:
+  {% for item in reorder.on_order|slice:":6" %}{{ item.name }}{% if not forloop.last %}, {% endif %}{% endfor %}{% if reorder.on_order|length > 6 %} and {{ reorder.on_order|length|add:"-6" }} more{% endif %}.
+</p>
+{% endif %}
+{% if reorder.no_supplier %}
+<p class="text-xs mt-1 opacity-90">
+  {{ reorder.no_supplier|length }} low item{{ reorder.no_supplier|length|pluralize }} can’t be ordered — no supplier set:
+  {% for item in reorder.no_supplier|slice:":6" %}{{ item.name }}{% if not forloop.last %}, {% endif %}{% endfor %}{% if reorder.no_supplier|length > 6 %} and {{ reorder.no_supplier|length|add:"-6" }} more{% endif %}.
+</p>
+{% endif %}
+{% if reorder.no_quantity %}
+<p class="text-xs mt-1 opacity-90">
+  {{ reorder.no_quantity|length }} low item{{ reorder.no_quantity|length|pluralize }} can’t be ordered — no reorder quantity set:
+  {% for item in reorder.no_quantity|slice:":6" %}{{ item.name }}{% if not forloop.last %}, {% endif %}{% endfor %}{% if reorder.no_quantity|length > 6 %} and {{ reorder.no_quantity|length|add:"-6" }} more{% endif %}.
+</p>
+{% endif %}

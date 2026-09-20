@@ -19,7 +19,7 @@ from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
 from rest_framework_simplejwt.views import TokenRefreshView
-from inventory.views import mark_notification_read, notif_unread_count, sales_report_view, sales_report_data, sales_report_document_view, export_orders, auto_generate_purchase_orders, htmx_adjust_stock
+from inventory.views import mark_notification_read, notif_unread_count, sales_report_view, sales_report_data, sales_report_document_view, export_orders, auto_generate_purchase_orders, htmx_adjust_stock, po_item_defaults
 from online_shop.views import dine_in_landing, generate_table_qr, print_order_receipt, table_qr_page, htmx_set_order_status, htmx_set_payment_status, htmx_set_townzone_center, get_item_price
 
 urlpatterns = [
@@ -30,6 +30,7 @@ urlpatterns = [
     path('admin/notifications/unread-count/', notif_unread_count, name='notif-unread-count'),
     path('admin/auto-generate-po/', auto_generate_purchase_orders, name='auto-generate-po'),
     path('admin/inventory/<int:inventory_id>/adjust/', htmx_adjust_stock, name='htmx-adjust-stock'),
+    path('admin/inventory/<int:inventory_id>/po-defaults/', po_item_defaults, name='po-item-defaults'),
     path('admin/orders/<int:order_id>/receipt/', print_order_receipt, name='print-receipt'),
     path('admin/orders/<int:order_id>/set-status/', htmx_set_order_status, name='htmx-order-status'),
     path('admin/orders/<int:order_id>/set-payment/', htmx_set_payment_status, name='htmx-order-payment'),

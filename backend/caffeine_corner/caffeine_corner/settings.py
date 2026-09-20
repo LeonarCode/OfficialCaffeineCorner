@@ -290,8 +290,10 @@ UNFOLD = {
     # OrderAdmin.show_status / show_payment_status).
     "SCRIPTS": [
         _versioned_static("js/htmx-csrf.js"),
+        _versioned_static("js/htmx-feedback.js"),
         _versioned_static("js/notif-badge.js"),
         _versioned_static("js/orderitem-price.js"),
+        _versioned_static("js/po-item-defaults.js"),
     ],
     "COLORS": {
         "primary": {
@@ -383,6 +385,11 @@ UNFOLD = {
                         "title": "Purchase Orders",
                         "icon": "receipt_long",
                         "link": reverse_lazy("admin:inventory_purchaseorder_changelist"),
+                    },
+                    {
+                        "title": "Stock Movements",
+                        "icon": "swap_vert",
+                        "link": reverse_lazy("admin:inventory_stockmovement_changelist"),
                     },
                     {
                         "title": "Suppliers",

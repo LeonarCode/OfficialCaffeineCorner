@@ -117,15 +117,24 @@ class Inventory(models.Model):
 
 
 class StockMovement(models.Model):
+    # The direction is spelled out in each label ("Stock In — …" / "Stock Out — …")
+    # so nobody has to remember which of the seven adds and which removes.
     MOVEMENT_TYPES = (
-        ("purchase",   "Purchase (Stock In)"),
-        ("usage",      "Usage (Stock Out)"),
-        ("adjustment", "Manual Adjustment"),
-        ("spoilage",   "Spoilage / Waste"),
-        ("return",     "Return to Supplier"),
-        ("transfer",   "Transfer"),
-        ("reversal",   "Reversal — Cancelled Order / Removed Item"),
+        ("purchase",   "Stock In — Purchase / Delivery"),
+        ("usage",      "Stock Out — Used in Orders (automatic)"),
+        ("adjustment", "Stock Out — Manual Adjustment"),
+        ("spoilage",   "Stock Out — Spoilage / Waste"),
+        ("return",     "Stock Out — Return to Supplier"),
+        ("transfer",   "Stock In — Transfer"),
+        ("reversal",   "Stock In — Order Cancelled (automatic)"),
     )
+    # Which way each type moves stock. "return" is *to* the supplier, so it
+    # takes stock out (it used to be counted as stock in).
+    STOCK_IN  = frozenset({"purchase", "transfer", "reversal"})
+    STOCK_OUT = frozenset({"usage", "spoilage", "adjustment", "return"})
+    # What staff can record by hand. "usage" and "reversal" are written by the
+    # order system, and "transfer" has no destination to make sense of.
+    MANUAL_TYPES = ("purchase", "adjustment", "spoilage", "return")
 
     inventory       = models.ForeignKey(
                           Inventory,
@@ -164,17 +173,24 @@ class StockMovement(models.Model):
             models.Index(fields=["inventory", "movement_type"]),
         ]
 
-    def save(self, *args, **kwargs):
+    def save(self, *args, apply_to_stock=True, **kwargs):
         # This is the ONLY place that should ever touch quantity_on_hand for
         # a movement — callers must not also pre-adjust it themselves before
         # creating a StockMovement, or the change gets applied twice.
-        STOCK_IN  = {"purchase", "return", "transfer", "reversal"}
-        STOCK_OUT = {"usage", "spoilage", "adjustment"}
-        if self.movement_type in STOCK_IN:
-            self.quantity_change = self.quantity
-        else:
-            self.quantity_change = -self.quantity
+        #
+        # It does so exactly once, when the movement is *created*. Movements are
+        # a history: saving an existing one again (a note edited in a shell, a
+        # re-save) used to re-apply quantity_change and push stock by that
+        # amount a second time.
+        creating = self._state.adding
+        if creating:
+            self.quantity_change = self.quantity if self.movement_type in self.STOCK_IN else -self.quantity
         super().save(*args, **kwargs)
+        # apply_to_stock=False is for the one case where the stock is already
+        # there and only the record is missing: an item added with an opening
+        # quantity (the movement documents it; applying it again would double it).
+        if not creating or not apply_to_stock:
+            return
         # Floor at 0 at the DB level (F-expression, race-safe) — physical
         # stock can't go negative even if usage exceeds what's on hand.
         from django.db.models.functions import Greatest

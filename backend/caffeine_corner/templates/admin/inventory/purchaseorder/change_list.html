@@ -3,30 +3,46 @@
 
 {% block content %}
 
-{% if low_stock_count %}
+{% comment %}
+  `reorder` comes from inventory.purchasing.reorder_report(): the low-stock items
+  sorted by what can be done about them. The button acts on exactly the
+  "to order" group, so the number shown here is the number that gets ordered.
+{% endcomment %}
+
+{% if reorder.to_order %}
 <div class="bg-orange-100 dark:bg-orange-500/20 rounded-default p-4 mb-5 flex items-center justify-between flex-wrap gap-3">
-  <div class="flex items-center gap-3">
+  <div class="flex items-start gap-3">
     <span class="material-symbols-outlined text-orange-700 dark:text-orange-400">warning</span>
     <div>
       <p class="text-orange-700 dark:text-orange-400 font-semibold text-sm">
-        {{ low_stock_count }} item(s) are low on stock and need reordering!
+        {{ reorder.to_order|length }} item{{ reorder.to_order|length|pluralize }} need{{ reorder.to_order|length|pluralize:"s," }} reordering
       </p>
       <p class="text-orange-700 dark:text-orange-400 text-xs mt-0.5">
-        {% trans "Click the button to auto-generate purchase orders for all low stock items." %}
+        {% for item in reorder.to_order|slice:":6" %}{{ item.name }}{% if not forloop.last %}, {% endif %}{% endfor %}{% if reorder.to_order|length > 6 %} and {{ reorder.to_order|length|add:"-6" }} more{% endif %}.
+        {% trans "One draft purchase order is made per supplier — you can review it before sending." %}
       </p>
+      {% include "admin/inventory/purchaseorder/_reorder_notes.html" %}
     </div>
   </div>
   <form method="post" action="{{ auto_generate_url }}">
     {% csrf_token %}
     <button
       type="submit"
-      onclick="return confirm('Auto-generate Purchase Orders for {{ low_stock_count }} low stock item(s)?')"
+      onclick="return confirm('Create draft purchase order(s) for {{ reorder.to_order|length }} item(s)?')"
       class="font-medium inline-flex items-center gap-1 relative rounded-default justify-center whitespace-nowrap cursor-pointer px-3 py-2 text-sm border border-base-200 bg-primary-600 border-transparent text-white hover:bg-primary-600/80"
     >
       <span class="material-symbols-outlined text-sm -ml-0.5">autorenew</span>
       {% trans "Auto-Generate Purchase Orders" %}
     </button>
   </form>
+</div>
+{% elif reorder.low_total %}
+<div class="bg-blue-100 dark:bg-blue-500/20 rounded-default px-4 py-3 mb-5 flex items-start gap-3">
+  <span class="material-symbols-outlined text-blue-700 dark:text-blue-400 text-lg">info</span>
+  <div>
+    <p class="text-blue-700 dark:text-blue-400 text-sm font-semibold">{% trans "Nothing new to order right now." %}</p>
+    {% include "admin/inventory/purchaseorder/_reorder_notes.html" %}
+  </div>
 </div>
 {% else %}
 <div class="bg-green-100 dark:bg-green-500/20 rounded-default px-4 py-3 mb-5 flex items-center gap-3">

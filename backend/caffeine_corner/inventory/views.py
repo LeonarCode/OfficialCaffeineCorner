@@ -9,6 +9,8 @@ import datetime
 import json
 from online_shop.models import Order, Product, LoyaltyPoint, Notification, ActivityLog
 from inventory.models import Inventory, PurchaseOrder, PurchaseOrderItem
+from inventory import purchasing
+from inventory.stock import MAX_STOCK, check_movement
 from inventory.sales_report import ORDER_TYPES, build_sales_report, parse_report_params, sales_scope
 import csv
 import openpyxl
@@ -17,93 +19,99 @@ from django.shortcuts import redirect, get_object_or_404
 from django.views.decorators.http import require_POST
 from django.utils.html import format_html
 
+def _names(items, limit=5):
+    """"Sugar, Butter, Eggs and 4 more" — for messages that list items."""
+    names = [item.name for item in items]
+    if len(names) <= limit:
+        return ', '.join(names)
+    return f"{', '.join(names[:limit])} and {len(names) - limit} more"
+
+
 @staff_member_required
 def auto_generate_purchase_orders(request):
+    """
+    One draft Purchase Order per supplier, for every item that is at or under
+    its reorder level. Skips (and says why) the items that can't or shouldn't
+    be ordered right now: already on an open PO (ordering again would double
+    up), no supplier to order from, or no reorder quantity to order.
+    """
+    from django.contrib import messages
+    from django.db import transaction
+
     if request.method != 'POST':
         return redirect('/admin/inventory/purchaseorder/')
 
-    # Hanapin lahat ng low stock items na may supplier
-    low_stock_items = Inventory.objects.filter(
-        quantity_on_hand__lte=F('reorder_points'),
-        quantity_on_hand__gt=0,  # hindi pa out of stock
-        supplier__isnull=False,  # may supplier
-    ).select_related('supplier')
+    report = purchasing.reorder_report()
 
-    out_of_stock_items = Inventory.objects.filter(
-        quantity_on_hand=0,
-        supplier__isnull=False,
-    ).select_related('supplier')
+    # Things staff should know, whether or not anything gets ordered.
+    if report.on_order:
+        messages.info(request, f'Skipped — already on an open purchase order: {_names(report.on_order)}.')
+    if report.no_supplier:
+        messages.warning(request, f'Skipped — no supplier set (add one on the item): {_names(report.no_supplier)}.')
+    if report.no_quantity:
+        messages.warning(request, f'Skipped — no reorder quantity set (add one on the item): {_names(report.no_quantity)}.')
 
-    all_items = list(low_stock_items) + list(out_of_stock_items)
-
-    if not all_items:
-        from django.contrib import messages
-        messages.warning(request, 'No low stock items found that need reordering.')
+    if not report.to_order:
+        if not report.low_total:
+            messages.warning(request, 'Nothing to order — no item is at or under its reorder level.')
+        else:
+            messages.warning(request, 'Nothing new to order right now.')
         return redirect('/admin/inventory/purchaseorder/')
 
-    # Group by supplier
-    supplier_items = {}
-    for item in all_items:
-        supplier_id = item.supplier.id
-        if supplier_id not in supplier_items:
-            supplier_items[supplier_id] = {
-                'supplier': item.supplier,
-                'items':    []
-            }
-        supplier_items[supplier_id]['items'].append(item)
+    by_supplier = {}
+    for item in report.to_order:
+        by_supplier.setdefault(item.supplier_id, []).append(item)
 
-    # Generate PO per supplier
-    created_pos = []
-    for supplier_id, group in supplier_items.items():
-        # Generate PO reference
-        today     = timezone.now()
-        ref_count = PurchaseOrder.objects.filter(
-            ordered_at__year=today.year,
-            ordered_at__month=today.month,
-        ).count() + 1
-        reference = f'PO-{today.strftime("%Y%m")}-{str(ref_count).zfill(4)}'
+    today = timezone.localdate()
+    created, extended = [], []
+    with transaction.atomic():
+        for items in by_supplier.values():
+            supplier = items[0].supplier
+            # A draft already started for this supplier today gets the new items added to it
+            po = PurchaseOrder.objects.filter(supplier=supplier, status='draft', ordered_at__date=today).first()
+            if po:
+                extended.append(po)
+            else:
+                po = PurchaseOrder.objects.create(
+                    supplier=supplier,
+                    reference=purchasing.next_reference(today),
+                    status='draft',
+                    expected_at=today + datetime.timedelta(days=7),
+                    created_by=request.user,
+                    notes=f'Auto-generated on {today:%B %d, %Y} for low stock items.',
+                )
+                created.append(po)
+            for item in items:
+                PurchaseOrderItem.objects.get_or_create(
+                    purchase_order=po, inventory=item,
+                    defaults={'quantity_ordered': purchasing.suggested_quantity(item), 'unit_cost': item.cost_per_unit},
+                )
 
-        # Avoid duplicate PO — check if may existing draft PO for same supplier today
-        existing = PurchaseOrder.objects.filter(
-            supplier=group['supplier'],
-            status='draft',
-            ordered_at__date=today.date(),
-        ).first()
-
-        if existing:
-            po = existing
-        else:
-            po = PurchaseOrder.objects.create(
-                supplier=group['supplier'],
-                reference=reference,
-                status='draft',
-                expected_at=today.date() + timezone.timedelta(days=7),
-                created_by=request.user,
-                notes=f'Auto-generated on {today.strftime("%B %d, %Y")} for low stock items.',
-            )
-
-        # Add items to PO
-        for item in group['items']:
-            # Skip if already in this PO
-            if PurchaseOrderItem.objects.filter(purchase_order=po, inventory=item).exists():
-                continue
-
-            PurchaseOrderItem.objects.create(
-                purchase_order=po,
-                inventory=item,
-                quantity_ordered=item.reorder_quantity or (item.reorder_points * 2),
-                quantity_received=0,
-                unit_cost=item.cost_per_unit,
-            )
-
-        created_pos.append(po)
-
-    from django.contrib import messages
+    ordered = len(report.to_order)
+    parts = []
+    if created:
+        parts.append(f"created {', '.join(po.reference for po in created)}")
+    if extended:
+        parts.append(f"added to draft {', '.join(po.reference for po in extended)}")
     messages.success(
         request,
-        f'Successfully generated {len(created_pos)} Purchase Order(s) for {len(all_items)} low stock item(s).'
+        f"{ordered} item{'s' if ordered != 1 else ''} to reorder — {' and '.join(parts)}. "
+        'Review the quantities, then mark it sent when you have ordered.',
     )
     return redirect('/admin/inventory/purchaseorder/')
+
+
+@staff_member_required
+def po_item_defaults(request, inventory_id):
+    """What the Purchase Order form fills in for an item once staff pick it: its cost, and how much they usually order."""
+    item = get_object_or_404(Inventory, pk=inventory_id)
+    suggested = purchasing.suggested_quantity(item)
+    return JsonResponse({
+        'unit_cost': str(item.cost_per_unit),
+        'quantity': str(suggested) if suggested > 0 else '',
+        'unit': item.unit,
+    })
+
 
 # Notification "bell" — the sidebar's live unread badge (see
 # static/js/notif-badge.js, polled every 20s) plus mark-as-read from either
@@ -169,12 +177,22 @@ def htmx_adjust_stock(request, inventory_id):
     if kind not in ('purchase', 'adjustment'):
         return HttpResponseBadRequest('Invalid adjustment type')
 
+    # The messages below are shown to staff as a toast (static/js/htmx-feedback.js
+    # displays a short plain-text 4xx body as-is) — before that, pressing "+"
+    # with the box empty just did nothing on screen, which read as "broken".
+    raw = request.POST.get('quantity', '').strip()
     try:
-        qty = Decimal(request.POST.get('quantity', ''))
+        qty = Decimal(raw)
     except InvalidOperation:
-        return HttpResponseBadRequest('Invalid quantity')
-    if qty <= 0:
-        return HttpResponseBadRequest('Quantity must be positive')
+        qty = None
+    if qty is None or not qty.is_finite():           # blank, "abc", NaN, Infinity
+        return HttpResponseBadRequest('Enter a quantity first.' if not raw else 'Enter a valid number.')
+    if qty > MAX_STOCK:                              # before quantize(): a huge value like 1e30 would make it raise
+        return HttpResponseBadRequest('That quantity is too large.')
+    qty = qty.quantize(Decimal('0.01'))              # the stock fields keep 2 decimals; 0.004 must not become a 0.00 movement
+    problem = check_movement(inventory, kind, qty)   # > 0, not more than is on hand, fits the stock field
+    if problem:
+        return HttpResponseBadRequest(problem)
 
     StockMovement.objects.create(
         inventory=inventory,
