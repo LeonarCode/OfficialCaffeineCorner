@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
+from email.utils import formataddr, parseaddr
 from pathlib import Path
 from dotenv import load_dotenv
 from datetime import timedelta
@@ -200,6 +201,29 @@ EMAIL_USE_TLS = True
 EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER")
 EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD")
 
+# ── Outgoing email: order confirmations to customers, purchase orders to suppliers ──
+# (the sign-in OTP mail goes out the same way). See caffeine_corner/mailer.py.
+SHOP_NAME = 'Caffeine Corner'
+SHOP_ADDRESS = 'Garcia Hernandez, Bohol, Philippines'
+SHOP_PHONE = os.getenv('SHOP_PHONE', '')                    # optional; shown in the emails' footer when set
+SHOP_TIMEZONE = 'Asia/Manila'                               # times in emails are the shop's, whatever TIME_ZONE says
+
+# The "From" that customers and suppliers see. .env's DEFAULT_FROM_EMAIL is used as-is when
+# it already has a display name, otherwise it is shown as "Caffeine Corner <address>".
+# (Gmail only lets the account you log in with be the sender, so keep it that address.)
+_from_address = os.getenv('DEFAULT_FROM_EMAIL') or EMAIL_HOST_USER or ''
+if _from_address:
+    DEFAULT_FROM_EMAIL = _from_address if '<' in _from_address else formataddr((SHOP_NAME, _from_address))
+# Where a customer's / supplier's reply goes: the shop's mailbox.
+SHOP_REPLY_TO = os.getenv('SHOP_REPLY_TO') or parseaddr(_from_address)[1] or ''
+
+# Without a timeout a stalled SMTP connection hangs for ever — and the purchase-order
+# email is sent while a staff member waits for the page.
+EMAIL_TIMEOUT = 20
+# Order emails are sent from a background thread so a slow mail server never slows an
+# order down (see mailer.run_in_background). Tests and the console/file backends run inline.
+EMAIL_SEND_IN_BACKGROUND = True
+
 AUTH_USER_MODEL = 'authentication.User'
 
 # Internationalization
@@ -282,7 +306,8 @@ UNFOLD = {
         # frontend/index.html) — keeps "CAFFIENE CORNER" in the sidebar
         # looking like the one customers see, not the admin's default Inter.
         lambda request: "https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,600;0,700;1,400&display=swap",
-        lambda request: static("css/admin-theme.css"),
+        _versioned_static("css/admin-theme.css"),
+        _versioned_static("css/admin-analytics.css"),
     ],
     # Unfold already loads HTMX itself (unfold/js/htmx/htmx.js) on every
     # admin page — this just teaches it to send Django's CSRF token, used
@@ -343,27 +368,11 @@ UNFOLD = {
                         "title": "Town Zones",
                         "icon": "location_on",
                         "link": reverse_lazy("admin:online_shop_townzone_changelist"),
-                    }
-                ],
-            },
-            {
-                "title": "Products",
-                "separator": True,
-                "items": [
+                    },
                     {
                         "title": "Products",
                         "icon": "local_cafe",
                         "link": reverse_lazy("admin:online_shop_product_changelist"),
-                    },
-                    {
-                        "title": "Categories",
-                        "icon": "category",
-                        "link": reverse_lazy("admin:online_shop_category_changelist"),
-                    },
-                    {
-                        "title": "Ratings",
-                        "icon": "star",
-                        "link": reverse_lazy("admin:online_shop_rating_changelist"),
                     },
                     {
                         "title": "Loyalty Points",
@@ -396,11 +405,6 @@ UNFOLD = {
                         "icon": "local_shipping",
                         "link": reverse_lazy("admin:inventory_supplier_changelist"),
                     },
-                    {
-                        "title": "Inv. Categories",
-                        "icon": "folder",
-                        "link": reverse_lazy("admin:inventory_inventorycategory_changelist"),
-                    },
                 ],
             },
             {
@@ -416,6 +420,11 @@ UNFOLD = {
                         "title": "OTP Codes",
                         "icon": "lock",
                         "link": reverse_lazy("admin:authentication_otpcode_changelist"),
+                    },
+                    {
+                        "title": "Remittances",
+                        "icon": "payments",
+                        "link": reverse_lazy("admin:online_shop_remittance_changelist"),
                     },
                     {
                         "title": "Activity Logs",      # ← dagdag

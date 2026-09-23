@@ -1,0 +1,44 @@
+{% load humanize %}
+{% comment %}
+  The customer ratings panel on a product's page (ProductAdmin.rating_summary).
+  `summary` comes from online_shop.ratings.summarize(). Styles: static/css/admin-analytics.css.
+{% endcomment %}
+<div class="an-rating-panel" id="ratingSummary">
+  {% if summary.count %}
+  <div class="an-rating">
+    <div class="an-rating-score">
+      <div class="an-rating-num an-rate--{{ summary.tone }}">{{ summary.average }}</div>
+      {{ summary.stars }}
+      <div class="an-sub">based on {{ summary.count|intcomma }} rating{{ summary.count|pluralize }}</div>
+    </div>
+    <div class="an-dist">
+      {% for row in summary.distribution %}
+      <div class="an-dist-row">
+        <span>{{ row.stars }} ★</span>
+        <div class="an-track"><div class="an-fill" style="width:{{ row.pct }}%;--an-accent:#e0a020"></div></div>
+        <span class="an-dist-count">{{ row.count }}</span>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <ul class="an-reviews">
+    {% for review in summary.reviews %}
+    <li class="an-review">
+      <div class="an-review-head">
+        {{ review.stars }}
+        <strong>{{ review.who }}</strong>
+        <span class="an-sub" style="margin:0">{{ review.when|date:"M j, Y" }}</span>
+      </div>
+      {% if review.text %}<p class="an-review-text">{{ review.text }}</p>{% else %}<p class="an-review-text an-sub">No comment, just the stars.</p>{% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  <p class="an-none" style="margin-top:.9rem">
+    {% if summary.count > summary.reviews|length %}Showing the latest {{ summary.reviews|length }}. {% endif %}
+    <a class="an-link" href="{{ all_url }}">Manage all {{ summary.count|intcomma }} rating{{ summary.count|pluralize }} →</a>
+  </p>
+  {% else %}
+  <p class="an-none" style="margin:0">No ratings yet — customers can rate this product after they order it.</p>
+  {% endif %}
+</div>

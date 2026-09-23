@@ -10,7 +10,6 @@ import json
 from online_shop.models import Order, Product, LoyaltyPoint, Notification, ActivityLog
 from inventory.models import Inventory, PurchaseOrder, PurchaseOrderItem
 from inventory import purchasing
-from inventory.stock import MAX_STOCK, check_movement
 from inventory.sales_report import ORDER_TYPES, build_sales_report, parse_report_params, sales_scope
 import csv
 import openpyxl
@@ -72,9 +71,8 @@ def auto_generate_purchase_orders(request):
             if po:
                 extended.append(po)
             else:
-                po = PurchaseOrder.objects.create(
+                po = PurchaseOrder.objects.create(     # blank reference numbers itself — see PurchaseOrder.save()
                     supplier=supplier,
-                    reference=purchasing.next_reference(today),
                     status='draft',
                     expected_at=today + datetime.timedelta(days=7),
                     created_by=request.user,
@@ -157,74 +155,22 @@ def notif_unread_count(request):
     return JsonResponse({'count': Notification.objects.filter(is_read=False).count()})
 
 
-# Quick Stock Adjustment widget on the Inventory changelist (see
-# render_quick_adjust / InventoryAdmin.show_quick_adjust in admin.py) — logs
-# a StockMovement straight from the list, no need to open the item. "+"
-# posts a Purchase (stock in), "-" an Adjustment (stock out); StockMovement's
-# own save() does the actual quantity_on_hand math (see that model). Returns
-# the widget (reset) plus the Stock Level / Status cells out-of-band so all
-# three stay in sync from one click.
-@staff_member_required
-@require_POST
-def htmx_adjust_stock(request, inventory_id):
-    from decimal import InvalidOperation
-    from django.http import HttpResponseBadRequest
-    from inventory.models import StockMovement
-    from inventory.admin import render_quick_adjust, render_stock_bar, render_stock_status
-
-    inventory = get_object_or_404(Inventory, pk=inventory_id)
-    kind = request.GET.get('type')
-    if kind not in ('purchase', 'adjustment'):
-        return HttpResponseBadRequest('Invalid adjustment type')
-
-    # The messages below are shown to staff as a toast (static/js/htmx-feedback.js
-    # displays a short plain-text 4xx body as-is) — before that, pressing "+"
-    # with the box empty just did nothing on screen, which read as "broken".
-    raw = request.POST.get('quantity', '').strip()
-    try:
-        qty = Decimal(raw)
-    except InvalidOperation:
-        qty = None
-    if qty is None or not qty.is_finite():           # blank, "abc", NaN, Infinity
-        return HttpResponseBadRequest('Enter a quantity first.' if not raw else 'Enter a valid number.')
-    if qty > MAX_STOCK:                              # before quantize(): a huge value like 1e30 would make it raise
-        return HttpResponseBadRequest('That quantity is too large.')
-    qty = qty.quantize(Decimal('0.01'))              # the stock fields keep 2 decimals; 0.004 must not become a 0.00 movement
-    problem = check_movement(inventory, kind, qty)   # > 0, not more than is on hand, fits the stock field
-    if problem:
-        return HttpResponseBadRequest(problem)
-
-    StockMovement.objects.create(
-        inventory=inventory,
-        movement_type=kind,
-        quantity=qty,
-        unit_cost=inventory.cost_per_unit,
-        reference='Quick adjust (admin)',
-        performed_by=request.user,
-    )
-    inventory.refresh_from_db()
-
-    html = render_quick_adjust(inventory)
-    html += format_html(
-        '<span id="stock-bar-{}" hx-swap-oob="true">{}</span>',
-        inventory.pk, render_stock_bar(inventory),
-    )
-    html += format_html(
-        '<span id="stock-status-{}" hx-swap-oob="true">{}</span>',
-        inventory.pk, render_stock_status(inventory),
-    )
-    return HttpResponse(html)
-
-
 @staff_member_required
 def export_orders(request):
     export_format = request.GET.get('format', 'csv')
     status_filter = request.GET.get('status', '')
     date_from     = request.GET.get('date_from', '')
     date_to       = request.GET.get('date_to', '')
+    # The Orders list's Dine-in / Pick-up / Delivery tab: exporting from a tab
+    # exports that group. Anything that isn't a real order type is ignored.
+    order_type    = request.GET.get('order_type', '')
+    if order_type not in dict(Order.ORDER_TYPE_CHOICES):
+        order_type = ''
 
     orders = Order.objects.prefetch_related('items__product').order_by('-created_at')
 
+    if order_type:
+        orders = orders.filter(order_type=order_type)
     if status_filter:
         orders = orders.filter(status=status_filter)
     if date_from:
@@ -233,13 +179,18 @@ def export_orders(request):
         orders = orders.filter(created_at__date__lte=date_to)
 
     if export_format == 'excel':
-        return _export_excel(orders)
-    return _export_csv(orders)
+        return _export_excel(orders, order_type)
+    return _export_csv(orders, order_type)
 
 
-def _export_csv(orders):
+def _export_filename(extension, order_type):
+    group = f'_{order_type}' if order_type else ''         # orders_dine_in_20260921.csv
+    return f'orders{group}_{timezone.now().strftime("%Y%m%d")}.{extension}'
+
+
+def _export_csv(orders, order_type=''):
     response = HttpResponse(content_type='text/csv')
-    response['Content-Disposition'] = f'attachment; filename="orders_{timezone.now().strftime("%Y%m%d")}.csv"'
+    response['Content-Disposition'] = f'attachment; filename="{_export_filename("csv", order_type)}"'
 
     writer = csv.writer(response)
     writer.writerow([
@@ -276,7 +227,7 @@ def _export_csv(orders):
     return response
 
 
-def _export_excel(orders):
+def _export_excel(orders, order_type=''):
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
     wb = openpyxl.Workbook()
@@ -349,7 +300,7 @@ def _export_excel(orders):
     response = HttpResponse(
         content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     )
-    response['Content-Disposition'] = f'attachment; filename="orders_{timezone.now().strftime("%Y%m%d")}.xlsx"'
+    response['Content-Disposition'] = f'attachment; filename="{_export_filename("xlsx", order_type)}"'
     wb.save(response)
     return response
 

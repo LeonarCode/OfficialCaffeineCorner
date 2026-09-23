@@ -1,9 +1,11 @@
+import re
 from decimal import Decimal
 
 from django import forms
 from django.contrib import admin, messages
 from django.db.models import F, Q, Sum
 from django.forms.models import BaseInlineFormSet
+from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse
 from django.utils import timezone
@@ -14,11 +16,13 @@ from django.utils.translation import gettext_lazy as _
 from unfold.admin import ModelAdmin, TabularInline
 from unfold.decorators import action
 from unfold.enums import ActionVariant
+from unfold.forms import BaseDialogForm
 from unfold.widgets import UnfoldAdminSelectWidget, UnfoldAdminTextareaWidget, UnfoldAdminTextInputWidget
 
-from . import purchasing
-from .models import (
-    InventoryCategory, Supplier, Inventory,
+from caffeine_corner.mailer import peso, shop_time
+
+from . import movement_stats, purchasing
+from .models import ( Supplier, Inventory,
     StockMovement, PurchaseOrder, PurchaseOrderItem
 )
 from .stock import check_movement, show as show_qty
@@ -87,22 +91,22 @@ def _stock_bar(qty_on_hand, reorder_points, unit=''):
     )
 
 
-# ─── InventoryCategory ────────────────────────────────────────────────────────
-
-@admin.register(InventoryCategory)
-class InventoryCategoryAdmin(ModelAdmin):
-    list_display  = ['name', 'description']
-    search_fields = ['name']
-
 
 # ─── Supplier ─────────────────────────────────────────────────────────────────
 
 @admin.register(Supplier)
 class SupplierAdmin(ModelAdmin):
-    list_display  = ['name', 'contact_name', 'email', 'phone', 'is_active']
+    list_display  = ['name', 'contact_name', 'email', 'phone', 'show_website', 'is_active']
     list_editable = ['is_active']
     search_fields = ['name', 'email']
     list_filter   = ['is_active']
+
+    @admin.display(description='Website')
+    def show_website(self, obj):
+        if not obj.website:
+            return MUTED
+        return format_html('<a href="{0}" target="_blank" rel="noopener" class="text-primary-600 dark:text-primary-500">{1}</a>',
+                           obj.website, obj.website.split('//', 1)[-1].rstrip('/'))
 
 
 # ─── Stock movements: how staff record stock in / out ─────────────────────────
@@ -225,9 +229,9 @@ class StockMovementEntryInline(TabularInline):
 
 # ─── Inventory ────────────────────────────────────────────────────────────────
 
-# Module-level (not InventoryAdmin methods) so htmx_adjust_stock (views.py)
-# can re-render the exact same markup for its OOB swaps after a quick
-# adjustment — see render_quick_adjust below for the other half.
+# Module-level (not InventoryAdmin methods) so both the changelist columns
+# (show_stock_bar / show_stock_status) and the detail page (stock_state) draw
+# stock the same way.
 def render_stock_bar(obj):
     return _stock_bar(obj.quantity_on_hand, obj.reorder_points, obj.unit)
 
@@ -238,71 +242,6 @@ def render_stock_status(obj):
     if obj.is_low_stock:
         return _badge('Low Stock', 'warning')
     return _badge('OK', 'success')
-
-
-# A tiny +/- form living right in the changelist row — no more opening the
-# item just to log a delivery or a spoilage write-off. "+" logs a Purchase
-# (stock in), "-" a manual Adjustment (stock out); anything needing a PO
-# reference, a different movement type, or a look at past movements still
-# goes through the full item page (see StockMovementInline below). Posts to
-# htmx_adjust_stock (views.py), which re-renders this widget plus the Stock
-# Level / Status cells (out-of-band, matched by the ids below) so all three
-# stay in sync from one click, no page reload.
-def render_quick_adjust(obj):
-    # No `name` on the quantity input — deliberate, not an oversight. Every
-    # row on this changelist has one, all sitting inside Django's one big
-    # #changelist-form (it wraps the whole results table, for bulk
-    # actions), and htmx always merges in every *named* field of a
-    # triggering element's closest enclosing form for a POST — same as a
-    # native form submit would. hx-include only adds more sources on top of
-    # that, it can't turn it off, and hx-params can't selectively drop just
-    # the duplicates either (it's a same-or-nothing filter over the
-    # already-merged result, applied *after* hx-vals merges in too — tried
-    # hx-params="none" first, thinking it'd suppress only the form; it
-    # wiped the hx-vals value along with it). See the long comment on
-    # _htmx_select in online_shop/admin.py for how this exact failure mode
-    # actually corrupted a different order's status in testing — same bug,
-    # confirmed here too before this fix (every row's quantity ended up in
-    # one request). A field with no `name` isn't a "successful" form
-    # control at all, so it's invisible to that automatic collection —
-    # hx-vals below, reading this one input's value directly at request
-    # time, is then the *only* source for it, no collision possible.
-    dom_id = f'qa-{obj.pk}'
-    base_url = reverse('htmx-adjust-stock', args=[obj.pk])
-    # Double quotes inside, since the hx-vals HTML attribute itself is
-    # wrapped in single quotes below — a single quote in here would close
-    # that attribute early and truncate the rest of the expression (caught
-    # this via an actual browser console: htmx choked on the cut-off JS
-    # with "Unexpected end of input").
-    qty_selector = f'document.getElementById("{dom_id}").querySelector("input").value'
-    vals = mark_safe('js:{"quantity": ' + qty_selector + '}')
-    # A rejected request (say "+" pressed with the box empty) is explained by a
-    # toast — see static/js/htmx-feedback.js — and hx-on below puts the cursor
-    # back in the quantity box so the fix is one keystroke away. The two
-    # buttons share hx-on, so it's spelled once and passed in.
-    refocus = mark_safe('this.parentNode.querySelector(\'input\').focus()')
-    return format_html(
-        '<div id="{0}" class="flex items-center gap-1">'
-        '<input type="number" step="0.01" min="0.01" placeholder="Qty" title="Quantity in {1}" '
-        'class="w-16 rounded-default border border-base-200 bg-white text-sm px-2 py-1 '
-        'dark:bg-base-900 dark:border-base-700 dark:text-font-default-dark" />'
-        '<span class="text-xs text-font-subtle-light dark:text-font-subtle-dark">{1}</span>'
-        '<button type="button" hx-post="{2}" hx-vals=\'{3}\' hx-target="closest td" hx-swap="innerHTML" '
-        'hx-on::response-error="{6}" '
-        'class="w-6 h-6 flex items-center justify-center rounded-default font-bold leading-none '
-        'bg-green-100 text-green-700 hover:bg-green-200 dark:bg-green-500/20 dark:text-green-400 dark:hover:bg-green-500/30" '
-        'title="Stock in (Purchase)" aria-label="Stock in">+</button>'
-        '<button type="button" hx-post="{4}" hx-vals=\'{5}\' hx-target="closest td" hx-swap="innerHTML" '
-        'hx-on::response-error="{6}" '
-        'class="w-6 h-6 flex items-center justify-center rounded-default font-bold leading-none '
-        'bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-500/20 dark:text-red-400 dark:hover:bg-red-500/30" '
-        'title="Stock out (Adjustment)" aria-label="Stock out">−</button>'
-        '</div>',
-        dom_id, obj.unit,
-        base_url + '?type=purchase', vals,
-        base_url + '?type=adjustment', vals,
-        refocus,
-    )
 
 
 class StockStatusFilter(admin.SimpleListFilter):
@@ -356,14 +295,18 @@ class InventoryAdmin(ModelAdmin):
     form = InventoryAdminForm
     compressed_fields = True
     list_display = [
-        'name', 'category', 'supplier',
+        'name', 'supplier',
         'show_stock_bar', 'show_stock_status', 'show_on_order',
-        'show_expiry_status', 'show_stock_value', 'show_quick_adjust',
+        'show_expiry_status', 'show_stock_value',
     ]
-    list_filter         = [StockStatusFilter, 'category', 'supplier']
+    list_filter         = [StockStatusFilter, 'supplier']
     search_fields       = ['name', 'sku']
-    list_select_related = ['category', 'supplier']
+    list_select_related = ['supplier']
     inlines             = [StockMovementEntryInline]
+    # Said out loud because the "on order" total below groups the query, and a grouped query
+    # silently drops the model's default ordering — which would leave the item pickers on the
+    # purchase-order and stock-movement forms (20 items a page) free to repeat or skip items.
+    ordering            = ['name', 'pk']
 
     def get_queryset(self, request):
         # "On order" per item, in one query: what open purchase orders still owe.
@@ -376,7 +319,7 @@ class InventoryAdmin(ModelAdmin):
     # (Reserved isn't offered: nothing in the system ever sets or reads it, so
     # it was just a box that suggested a feature that doesn't exist.)
     def get_fieldsets(self, request, obj=None):
-        item = (_('Item'), {'fields': ['category', 'supplier', 'name', 'sku', 'unit']})
+        item = (_('Item'), {'fields': ['supplier', 'name', 'sku', 'unit']})
         if obj is None:
             return [
                 item,
@@ -432,7 +375,7 @@ class InventoryAdmin(ModelAdmin):
                 m.performed_by or 'System',
             ) for m in moves
         ))
-        history = reverse('admin:inventory_stockmovement_changelist') + f'?inventory__id__exact={obj.pk}'
+        history = reverse('admin:inventory_stockmovement_changelist') + f'?inventory__id__exact={obj.pk}&period=all'
         return format_html(
             '<div class="overflow-x-auto"><table class="w-full text-sm">{}</table></div>'
             '<p class="mt-3 text-sm"><a class="font-medium text-primary-600 dark:text-primary-500" href="{}">'
@@ -479,11 +422,11 @@ class InventoryAdmin(ModelAdmin):
 
     # ── list columns ──
     def show_stock_bar(self, obj):
-        return format_html('<span id="stock-bar-{}">{}</span>', obj.pk, render_stock_bar(obj))
+        return render_stock_bar(obj)
     show_stock_bar.short_description = _('Stock Level')
 
     def show_stock_status(self, obj):
-        return format_html('<span id="stock-status-{}">{}</span>', obj.pk, render_stock_status(obj))
+        return render_stock_status(obj)
     show_stock_status.short_description = _('Status')
 
     def show_on_order(self, obj):
@@ -499,10 +442,6 @@ class InventoryAdmin(ModelAdmin):
             return mark_safe('<span class="text-base-400 dark:text-base-500">₱0.00</span>')
         return format_html('<span class="font-semibold whitespace-nowrap">₱{}</span>', f"{value:,.2f}")
     show_stock_value.short_description = _('Stock Value')
-
-    def show_quick_adjust(self, obj):
-        return render_quick_adjust(obj)
-    show_quick_adjust.short_description = _('Quick Adjust')
 
     def show_expiry_status(self, obj):
         if not obj.expiry_date:
@@ -540,14 +479,92 @@ class MovementSourceFilter(admin.SimpleListFilter):
         return queryset
 
 
+class PeriodFilter(admin.SimpleListFilter):
+    """
+    How far back the list (and the overview above it) looks. The chips in the
+    overview panel drive it, and it is also in the Filters box. It defaults to the
+    last 30 days: with months of order deductions in it, "everything" is a wall of
+    rows, and the overview needs a period to mean anything.
+
+    (It must stay a normal, visible filter: Django drops filters that report
+    has_output() False, and with them the period would silently stop applying.)
+    """
+    title = _('period')
+    parameter_name = 'period'
+
+    def lookups(self, request, model_admin):
+        return movement_stats.PERIODS
+
+    def value(self):
+        return movement_stats.normalize_period(super().value())
+
+    def choices(self, changelist):
+        # No "All" entry: with no period chosen the default is the last 30 days,
+        # so "All" would have quietly meant something else. "All time" is a period.
+        for key, label in self.lookup_choices:
+            yield {
+                'selected': self.value() == key,
+                'query_string': changelist.get_query_string({self.parameter_name: key}, remove=['p']),
+                'display': label,
+            }
+
+    def queryset(self, request, queryset):
+        start, end = movement_stats.period_bounds(self.value(), timezone.localdate())
+        if start is not None:
+            queryset = queryset.filter(created_at__date__gte=start)
+        if end is not None:
+            queryset = queryset.filter(created_at__date__lt=end)
+        return queryset
+
+
+# What each kind of movement looks like in the list: (arrow, direction, plain-language reason, colour)
+MOVEMENT_KIND = {
+    'purchase':   ('▲', 'Stock in',  'Delivery / purchase',  'success'),
+    'transfer':   ('▲', 'Stock in',  'Transfer in',          'base'),
+    'reversal':   ('▲', 'Stock in',  'Order cancelled',      'base'),
+    'usage':      ('▼', 'Stock out', 'Used in an order',     'info'),
+    'adjustment': ('▼', 'Stock out', 'Manual adjustment',    'warning'),
+    'spoilage':   ('▼', 'Stock out', 'Spoilage / waste',     'danger'),
+    'return':     ('▼', 'Stock out', 'Returned to supplier', 'warning'),
+}
+ORDER_REFERENCE = re.compile(r'^Order #CC-(\d+)$')
+
+
 @admin.register(StockMovement)
 class StockMovementAdmin(ModelAdmin):
-    list_display        = ['created_at', 'inventory', 'show_movement_type', 'show_quantity_change', 'reference', 'notes', 'performed_by']
-    list_filter         = [MovementSourceFilter, 'movement_type', 'inventory', 'created_at']
-    list_select_related = ['inventory', 'performed_by']
-    search_fields       = ['inventory__name', 'inventory__sku', 'reference', 'notes']
-    date_hierarchy      = 'created_at'
-    autocomplete_fields = ['inventory']
+    list_display = [
+        'show_when', 'show_item', 'show_kind', 'show_quantity_change', 'show_value',
+        'show_source', 'show_note', 'show_who',
+    ]
+    list_filter          = [PeriodFilter, MovementSourceFilter, 'movement_type', 'inventory']
+    list_select_related  = ['inventory', 'performed_by']
+    list_per_page        = 50
+    search_fields        = ['inventory__name', 'inventory__sku', 'reference', 'notes']
+    autocomplete_fields  = ['inventory']
+    list_before_template = 'admin/inventory/stockmovement/overview.html'
+
+    # ── the overview above the list ──
+    def changelist_view(self, request, extra_context=None):
+        extra_context = {
+            **(extra_context or {}),
+            'title': _('Stock Movements'),
+            'add_url': reverse('admin:inventory_stockmovement_add'),
+        }
+        response = super().changelist_view(request, extra_context)
+        changelist = getattr(response, 'context_data', {}).get('cl')
+        if changelist is None:                                        # a redirect (bad filter value) has nothing to summarise
+            return response
+        period = next(
+            (spec.value() for spec in changelist.filter_specs if isinstance(spec, PeriodFilter)),
+            movement_stats.DEFAULT_PERIOD,
+        )
+        only_the_period = not (set(request.GET) - {'period', 'p', 'o'})   # anything else filtering makes "vs last period" meaningless
+        response.context_data['movements'] = movement_stats.build_overview(changelist.queryset, period, only_the_period)
+        response.context_data['period_chips'] = [
+            {'label': label, 'active': key == period, 'url': changelist.get_query_string({'period': key}, remove=['p'])}
+            for key, label in movement_stats.PERIODS
+        ]
+        return response
 
     def get_form(self, request, obj=None, **kwargs):
         if obj is None:
@@ -561,13 +578,69 @@ class StockMovementAdmin(ModelAdmin):
                 obj.unit_cost = obj.inventory.cost_per_unit
         super().save_model(request, obj, form, change)
 
-    def show_movement_type(self, obj):
-        return _badge(obj.get_movement_type_display(), MOVEMENT_COLORS.get(obj.movement_type, 'base'))
-    show_movement_type.short_description = _('Type')
+    # ── the list ──
+    @admin.display(description=_('When'), ordering='created_at')
+    def show_when(self, obj):
+        moment = timezone.localtime(obj.created_at)
+        return format_html(
+            '<span class="an-two an-nowrap"><span class="an-main">{}</span><span class="an-subline">{}</span></span>',
+            date_format(moment, 'M j, Y'), date_format(moment, 'g:i A'),
+        )
 
+    @admin.display(description=_('Item'), ordering='inventory__name')
+    def show_item(self, obj):
+        return format_html(
+            '<span class="an-two"><a class="an-link" href="{}">{}</a><span class="an-subline">{}</span></span>',
+            reverse('admin:inventory_inventory_change', args=[obj.inventory_id]), obj.inventory.name, obj.inventory.sku,
+        )
+
+    @admin.display(description=_('What happened'), ordering='movement_type')
+    def show_kind(self, obj):
+        arrow, direction, reason, variant = MOVEMENT_KIND.get(obj.movement_type, ('', obj.get_movement_type_display(), '', 'base'))
+        return format_html(
+            '<span class="an-two"><span class="an-pill an-pill--{}">{} {}</span><span class="an-subline">{}</span></span>',
+            variant, arrow, direction, reason,
+        )
+
+    @admin.display(description=_('Quantity'), ordering='quantity_change')
     def show_quantity_change(self, obj):
         return render_movement_change(obj, obj.inventory.unit)
-    show_quantity_change.short_description = _('Change')
+
+    @admin.display(description=_('Value'))
+    def show_value(self, obj):
+        value = abs(obj.quantity_change) * obj.unit_cost
+        return format_html('<span class="an-nowrap">{}</span>', _peso(value)) if value else MUTED
+
+    @admin.display(description=_('Source'), ordering='reference')
+    def show_source(self, obj):
+        reference = obj.reference
+        if not reference:
+            return MUTED
+        order = ORDER_REFERENCE.match(reference)
+        if order:                                                    # "Order #CC-00004" -> that order
+            return format_html(
+                '<a class="an-link an-nowrap" href="{}">{}</a>',
+                reverse('admin:online_shop_order_change', args=[int(order.group(1))]), reference,
+            )
+        if reference.startswith('PO-'):                              # a purchase order's number -> find it in the PO list
+            return format_html(
+                '<a class="an-link an-nowrap" href="{}?q={}">{}</a>',
+                reverse('admin:inventory_purchaseorder_changelist'), reference, reference,
+            )
+        return format_html('<span class="an-nowrap">{}</span>', reference)
+
+    @admin.display(description=_('Note'))
+    def show_note(self, obj):
+        if not obj.notes:
+            return MUTED
+        short = obj.notes if len(obj.notes) <= 46 else obj.notes[:45].rstrip() + '…'
+        return format_html('<span class="an-subline" title="{}">{}</span>', obj.notes, short)
+
+    @admin.display(description=_('By'), ordering='performed_by__email')
+    def show_who(self, obj):
+        if obj.performed_by:
+            return format_html('<span class="an-nowrap">{}</span>', obj.performed_by.get_full_name() or obj.performed_by.email)
+        return mark_safe('<span class="an-subline">System</span>')
 
     def has_change_permission(self, request, obj=None):
         return False
@@ -577,11 +650,68 @@ class StockMovementAdmin(ModelAdmin):
 
 
 # ─── PurchaseOrder ────────────────────────────────────────────────────────────
+# The buttons on a purchase order's page (Email to supplier, Receive all, Mark as
+# sent) change things, and Unfold draws them as plain links — which a browser
+# fetches with GET. A link someone else planted (in a message, on another site)
+# could then email a supplier or add stock the moment a logged-in staff member
+# clicked it. So each one opens a confirmation first, and only the POST that the
+# dialog submits (with Django's CSRF token) does anything; a bare GET just shows
+# the dialog.
+
+class _PurchaseOrderDialog(BaseDialogForm):
+    """A confirmation with a sentence or two about what is about to happen."""
+    form_before_template = 'admin/inventory/purchaseorder/action_dialog.html'
+    note = ''
+
+    def get_before_template_context(self, request, object_id=None):
+        return {'note': self.note}
+
+
+class ReceiveDialog(_PurchaseOrderDialog):
+    note = _('Every item still outstanding on this order is added to stock now, as if it arrived in full.')
+
+
+class MarkSentDialog(_PurchaseOrderDialog):
+    note = _('This only marks the order as sent — no email goes out. Use “Email to supplier” to send it.')
+
+
+class ClosePartialDialog(_PurchaseOrderDialog):
+    note = _(
+        'For when the supplier isn’t sending the rest: every item still short is lowered to what '
+        'actually arrived, and the order becomes Fully Received. This can’t be undone by editing a '
+        'quantity back — only by recording a new delivery against it.'
+    )
+
+
+class EmailSupplierDialog(BaseDialogForm):
+    """Shows who the email goes to, and what it is about, before it is sent."""
+    form_before_template = 'admin/inventory/purchaseorder/email_dialog.html'
+
+    def get_before_template_context(self, request, object_id=None):
+        po = PurchaseOrder.objects.select_related('supplier').filter(pk=object_id).first()
+        if po is None:
+            return {}
+        lines = list(po.items.all())
+        return {
+            'supplier': po.supplier.name,
+            'address': (po.supplier.email or '').strip(),
+            'supplier_url': reverse('admin:inventory_supplier_change', args=[po.supplier_id]),
+            'reference': po.reference,
+            'line_count': len(lines),
+            'total': peso(sum((line.total_cost for line in lines), Decimal('0'))),
+            'expected': date_format(po.expected_at, 'F j, Y') if po.expected_at else '',
+            'emailed': date_format(shop_time(po.emailed_at), 'F j, Y \\a\\t g:i A') if po.emailed_at else '',
+            'will_be_marked_sent': po.status == 'draft',
+        }
+
+
 # The flow: create (Draft) → mark Sent when you've ordered → items arrive →
 # Received. Arrival is what changes stock: whatever you enter under "Received
 # so far" (or "Receive all remaining items") is recorded as Stock In against
-# this PO, and Partially / Fully Received follow by themselves. See
-# inventory/purchasing.py for the rules.
+# this PO, and Partially / Fully Received follow by themselves. If the
+# supplier stops short and isn't sending the rest, "Close as partially
+# received" is what finishes it instead — see purchasing.close_partial().
+# See inventory/purchasing.py for the rules.
 
 class PurchaseOrderForm(forms.ModelForm):
     # Received / Partially Received aren't offered: they follow from what has
@@ -591,10 +721,12 @@ class PurchaseOrderForm(forms.ModelForm):
 
     class Meta:
         model = PurchaseOrder
-        fields = ['supplier', 'status', 'reference', 'expected_at', 'notes']
-        labels = {'reference': _('PO number'), 'expected_at': _('Expected delivery')}
+        # No 'reference' here — it is never typed, on this form or any other (see
+        # PurchaseOrder.save()): numbered from the order's own id the moment it
+        # exists, shown read-only once it does (PurchaseOrderAdmin.get_readonly_fields).
+        fields = ['supplier', 'status', 'expected_at', 'notes']
+        labels = {'expected_at': _('Expected delivery')}
         help_texts = {
-            'reference': _('Leave blank and it is numbered for you (e.g. PO-202609-0001).'),
             'status': _(
                 'Draft → Sent once you have ordered. Received is set automatically as items arrive — '
                 'enter what came in under “Received so far”, or use “Receive all remaining items”.'
@@ -606,8 +738,6 @@ class PurchaseOrderForm(forms.ModelForm):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         # (A finished order is shown read-only, so these fields aren't on its form at all.)
-        if 'reference' in self.fields:
-            self.fields['reference'].required = False
         if 'status' in self.fields:
             statuses = list(self.EDITABLE_STATUSES) if self.instance.pk else ['draft', 'sent']
             if self.instance.pk and self.instance.status not in statuses:
@@ -621,7 +751,7 @@ class PurchaseOrderForm(forms.ModelForm):
         if cancelling and any(line.quantity_received > 0 for line in purchasing._lines(self.instance)):
             self.add_error('status', _(
                 'Some of this order has already been received, so it cannot be cancelled. '
-                'Lower the ordered quantities to what actually arrived instead.'
+                'Close it as partially received instead.'
             ))
         return cleaned
 
@@ -639,8 +769,16 @@ class PurchaseOrderItemForm(forms.ModelForm):
         super().__init__(*args, **kwargs)
         if 'unit_cost' in self.fields:                                  # (a finished order's lines are read-only: no fields)
             self.fields['unit_cost'].required = False                   # filled in from the item
-        if self.instance.pk and 'inventory' in self.fields:
-            self.fields['inventory'].disabled = True                    # what a line is for can't change after the fact
+        if self.instance.pk:
+            # What a line is *for* is fixed the moment it's saved — item, how much,
+            # at what cost. A new line (still being added to the order) is unaffected:
+            # this only locks a row once it already exists. Reconciling what actually
+            # arrived against what was ordered, when they don't match, is a deliberate
+            # action instead (PurchaseOrderAdmin.close_partial_detail) — not a value
+            # quietly typed over here.
+            for name in ('inventory', 'quantity_ordered', 'unit_cost'):
+                if name in self.fields:
+                    self.fields[name].disabled = True
 
     def clean(self):
         cleaned = super().clean()
@@ -652,9 +790,7 @@ class PurchaseOrderItemForm(forms.ModelForm):
             self.add_error('quantity_ordered', _('Enter how many to order — it must be above 0.'))
         if received is not None:
             if ordered is not None and received > ordered:
-                self.add_error('quantity_received', _(
-                    'That is more than was ordered. If the supplier really delivered more, raise the ordered quantity first.'
-                ))
+                self.add_error('quantity_received', _('That is more than was ordered.'))
             # self.instance still holds what is in the database here (it is only
             # overwritten once validation is done).
             already = self.instance.quantity_received if self.instance.pk else Decimal('0')
@@ -716,13 +852,13 @@ class PurchaseOrderItemInline(TabularInline):
 @admin.register(PurchaseOrder)
 class PurchaseOrderAdmin(ModelAdmin):
     form                = PurchaseOrderForm
-    list_display        = ['reference', 'supplier', 'show_status', 'show_progress', 'show_expected', 'show_total_cost', 'ordered_at']
+    list_display        = ['reference', 'supplier', 'show_status', 'show_progress', 'show_emailed', 'show_expected', 'show_total_cost', 'ordered_at']
     list_filter         = ['status', 'supplier', 'ordered_at']
     search_fields       = ['reference', 'supplier__name', 'items__inventory__name']
     list_select_related = ['supplier']
     inlines             = [PurchaseOrderItemInline]
-    actions             = ['mark_sent_action', 'receive_remaining_action', 'cancel_action']
-    actions_detail      = ['receive_remaining_detail', 'mark_sent_detail']
+    actions             = ['email_suppliers_action', 'mark_sent_action', 'receive_remaining_action', 'close_partial_action', 'cancel_action']
+    actions_detail      = ['email_supplier_detail', 'receive_remaining_detail', 'close_partial_detail', 'mark_sent_detail']
 
     STATUS_COLORS = {
         'draft':     'base',
@@ -737,16 +873,18 @@ class PurchaseOrderAdmin(ModelAdmin):
 
     # ── the form ──
     def get_fieldsets(self, request, obj=None):
+        # No 'reference' on a new order — there is nothing to show yet (it is
+        # numbered from the order's own id, which doesn't exist until it's saved).
         if obj is None:
-            return [(None, {'fields': ['supplier', 'status', 'reference', 'expected_at', 'notes']})]
-        return [(None, {'fields': ['supplier', 'status', 'reference', 'expected_at', 'received_at', 'created_by', 'notes']})]
+            return [(None, {'fields': ['supplier', 'status', 'expected_at', 'notes']})]
+        return [(None, {'fields': ['reference', 'supplier', 'status', 'expected_at', 'received_at', 'emailed_to_supplier', 'created_by', 'notes']})]
 
     def get_readonly_fields(self, request, obj=None):
         if obj is None:
             return []
         if purchasing.is_settled(obj):                                   # finished orders are a record, not a form
-            return ['supplier', 'status', 'reference', 'expected_at', 'received_at', 'created_by', 'notes']
-        return ['received_at', 'created_by']
+            return ['reference', 'supplier', 'status', 'expected_at', 'received_at', 'emailed_to_supplier', 'created_by', 'notes']
+        return ['reference', 'received_at', 'emailed_to_supplier', 'created_by']    # numbered automatically, never typed
 
     def has_delete_permission(self, request, obj=None):
         # Only orders that never brought anything in: deleting a received one
@@ -761,15 +899,25 @@ class PurchaseOrderAdmin(ModelAdmin):
                     f'{po.reference} is marked “Fully Received”, but not all of it has been received into stock. '
                     'Once the delivery is in, press “Receive all remaining items” (top right) — that adds it to stock.'
                 ), messages.WARNING)
+            elif po and po.status in purchasing.OPEN_STATUSES and not (po.supplier.email or '').strip():
+                self.message_user(request, (
+                    f'{po.supplier.name} has no email address on file, so this order can’t be emailed to them yet. '
+                    'Add one on the supplier’s page.'
+                ), messages.WARNING)
         return super().change_view(request, object_id, form_url, extra_context)
+
+    @admin.display(description=_('Emailed to supplier'))
+    def emailed_to_supplier(self, obj):
+        if not obj.emailed_at:
+            return mark_safe('<span class="text-base-500">Not emailed yet</span>')
+        return format_html('{} <span class="text-base-500">(to {})</span>',
+                           date_format(shop_time(obj.emailed_at), 'F j, Y, g:i A'), obj.supplier.email or obj.supplier.name)
 
     # ── saving ──
     def save_model(self, request, obj, form, change):
         if not change:
             obj.created_by = request.user
-        if not obj.reference:
-            obj.reference = purchasing.next_reference()
-        super().save_model(request, obj, form, change)
+        super().save_model(request, obj, form, change)          # a blank reference numbers itself — see PurchaseOrder.save()
 
     def save_formset(self, request, form, formset, change):
         if formset.model is not PurchaseOrderItem:
@@ -826,6 +974,43 @@ class PurchaseOrderAdmin(ModelAdmin):
         po = PurchaseOrder.objects.filter(pk=object_id).first()
         return bool(po) and po.status == 'draft'
 
+    def has_email_permission(self, request, object_id=None):
+        if not self.has_change_permission(request):
+            return False
+        if object_id is None:
+            return True
+        po = PurchaseOrder.objects.filter(pk=object_id).first()
+        return bool(po) and po.status in purchasing.OPEN_STATUSES
+
+    def has_close_partial_permission(self, request, object_id=None):
+        if not self.has_change_permission(request):
+            return False
+        if object_id is None:
+            return True
+        po = PurchaseOrder.objects.filter(pk=object_id).first()
+        return bool(po) and po.status == 'partial'
+
+    @staticmethod
+    def _back_to(request, po):
+        """Back to the order's page — from a confirmation dialog (an htmx request) that means telling htmx to load it."""
+        url = reverse('admin:inventory_purchaseorder_change', args=[po.pk])
+        if request.headers.get('HX-Request'):
+            response = HttpResponse()
+            response['HX-Redirect'] = url
+            return response
+        return redirect(url)
+
+    def _email(self, request, po):
+        was_draft, before = po.status == 'draft', po.emailed_at
+        try:
+            address = purchasing.email_to_supplier(po, request.user)
+        except purchasing.PurchaseOrderError as error:
+            self.message_user(request, str(error), messages.ERROR)
+            return False
+        text = f'{po.reference} was {"emailed again" if before else "emailed"} to {po.supplier.name} ({address})'
+        self.message_user(request, text + (' and marked as sent.' if was_draft else '.'), messages.SUCCESS)
+        return True
+
     def _receive(self, request, po):
         try:
             received = purchasing.receive_remaining(po, request.user)
@@ -845,7 +1030,20 @@ class PurchaseOrderAdmin(ModelAdmin):
             return
         self.message_user(request, f'{po.reference} marked as sent to {po.supplier.name}.', messages.SUCCESS)
 
-    @action(description=_('Mark as sent to supplier'), permissions=['send'], icon='send')
+    def _close_partial(self, request, po):
+        try:
+            purchasing.close_partial(po)
+        except purchasing.PurchaseOrderError as error:
+            self.message_user(request, str(error), messages.WARNING)
+            return
+        self.message_user(request, f'{po.reference} closed as fully received — what didn’t arrive was dropped from the order.', messages.SUCCESS)
+
+    @action(description=_('Email selected orders to their suppliers'), permissions=['email'], icon='mail')
+    def email_suppliers_action(self, request, queryset):
+        for po in queryset.select_related('supplier'):
+            self._email(request, po)
+
+    @action(description=_('Mark as sent (without emailing)'), permissions=['send'], icon='send')
     def mark_sent_action(self, request, queryset):
         for po in queryset:
             self._send(request, po)
@@ -865,20 +1063,54 @@ class PurchaseOrderAdmin(ModelAdmin):
             else:
                 self.message_user(request, f'{po.reference} cancelled.', messages.SUCCESS)
 
+    @action(description=_('Close as partially received (nothing more is coming)'), permissions=['close_partial'], icon='playlist_add_check')
+    def close_partial_action(self, request, queryset):
+        for po in queryset:
+            self._close_partial(request, po)
+
+    @action(
+        description=_('Email to supplier'), permissions=['email'], icon='mail',
+        variant=ActionVariant.PRIMARY, url_path='email-supplier',
+        dialog={'title': _('Email this order to the supplier?'), 'description': '', 'form_class': EmailSupplierDialog,
+                'form_submit_text': _('Send email')},
+    )
+    def email_supplier_detail(self, request, form, object_id):
+        po = get_object_or_404(PurchaseOrder.objects.select_related('supplier'), pk=object_id)
+        self._email(request, po)
+        return self._back_to(request, po)
+
     @action(
         description=_('Receive all remaining items'), permissions=['receive'], icon='inventory',
         variant=ActionVariant.PRIMARY, url_path='receive-remaining',
+        dialog={'title': _('Receive everything still outstanding?'), 'description': '', 'form_class': ReceiveDialog,
+                'form_submit_text': _('Add to stock')},
     )
-    def receive_remaining_detail(self, request, object_id):
+    def receive_remaining_detail(self, request, form, object_id):
         po = get_object_or_404(PurchaseOrder, pk=object_id)
         self._receive(request, po)
-        return redirect(reverse('admin:inventory_purchaseorder_change', args=[po.pk]))
+        return self._back_to(request, po)
 
-    @action(description=_('Mark as sent'), permissions=['send'], icon='send', url_path='mark-sent')
-    def mark_sent_detail(self, request, object_id):
+    @action(
+        description=_('Mark as sent (no email)'), permissions=['send'], icon='send',
+        variant=ActionVariant.PRIMARY, url_path='mark-sent',
+        dialog={'title': _('Mark this order as sent?'), 'description': '', 'form_class': MarkSentDialog,
+                'form_submit_text': _('Mark as sent')},
+    )
+    def mark_sent_detail(self, request, form, object_id):
         po = get_object_or_404(PurchaseOrder, pk=object_id)
         self._send(request, po)
-        return redirect(reverse('admin:inventory_purchaseorder_change', args=[po.pk]))
+        return self._back_to(request, po)
+
+    @action(
+        description=_('Close as partially received'), permissions=['close_partial'], icon='playlist_add_check',
+        variant=ActionVariant.PRIMARY, url_path='close-partial',
+        dialog={'title': _('Close this order as partially received?'), 'description': '', 'form_class': ClosePartialDialog,
+                'form_submit_text': _('Close order')},
+    )
+    def close_partial_detail(self, request, form, object_id):
+        po = get_object_or_404(PurchaseOrder, pk=object_id)
+        self._close_partial(request, po)
+        return self._back_to(request, po)
 
     # ── the list ──
     def show_status(self, obj):
@@ -900,6 +1132,15 @@ class PurchaseOrderAdmin(ModelAdmin):
             'bg-green-500' if pct == 100 else 'bg-primary-500', pct, done, len(lines),
         )
     show_progress.short_description = 'Progress'
+
+    @admin.display(description='Emailed')
+    def show_emailed(self, obj):
+        if obj.emailed_at:
+            return format_html('<span class="an-nowrap" title="Last emailed to the supplier">✉ {}</span>',
+                               date_format(shop_time(obj.emailed_at), 'M j, g:i A'))
+        if obj.status in purchasing.OPEN_STATUSES:
+            return mark_safe('<span class="an-subline">Not emailed yet</span>')
+        return MUTED
 
     def show_expected(self, obj):
         if not obj.expected_at:

@@ -80,7 +80,7 @@ class WhenStockIsApplied(TestCase):
 
 
 class CheckMovementTests(TestCase):
-    """The shared rule behind the item page, the Stock Movements form and Quick Adjust."""
+    """The shared rule behind the item page and the Stock Movements form."""
 
     def setUp(self):
         self.item = make_item(on_hand='10', unit='kg')

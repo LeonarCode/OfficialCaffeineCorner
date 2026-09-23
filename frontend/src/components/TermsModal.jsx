@@ -47,6 +47,7 @@ const TermsModal = () => {
                 <p className='text-amber-800 text-sm font-bold mb-1'>Limited Delivery Coverage</p>
                 <p className='text-amber-700 text-xs leading-relaxed'>
                   Delivery service is only available within our selected delivery zones. Orders outside these areas will not be accommodated for delivery — please choose Pick-up instead if your location is not listed.
+                  You wait if the
                 </p>
               </div>
             </div>

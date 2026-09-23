@@ -247,6 +247,26 @@ const Orders = () => {
                         </div>
                       )}
 
+                      {/* Expected Ready / Delivery Time */}
+                      {order.expected_ready_at && (
+                        <div className='flex items-center gap-2 bg-orange-50 border border-orange-200 rounded-xl px-4 py-3 mb-4'>
+                          <span className='text-lg'>⏰</span>
+                          <div>
+                            <p className='text-orange-700 text-xs font-bold uppercase tracking-wide'>
+                              {order.order_type === 'regular' ? 'Expected Delivery'
+                                : order.order_type === 'pickup' ? 'Ready for Pick-up'
+                                : 'Ready at Your Table'}
+                            </p>
+                            <p className='text-orange-800 text-sm font-semibold'>
+                              Around {new Date(order.expected_ready_at).toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit' })}
+                              {order.order_type === 'regular' && order.zone_estimated_time && (
+                                <span className='font-normal'> · then ~{order.zone_estimated_time} for delivery to your area</span>
+                              )}
+                            </p>
+                          </div>
+                        </div>
+                      )}
+
                       {/* Regular Order — Downpayment Details */}
                       {order.order_type === 'regular' && parseFloat(order.downpayment_amount) > 0 && (
                         <div className='bg-amber-50 border border-amber-200 rounded-xl p-4 mb-4'>

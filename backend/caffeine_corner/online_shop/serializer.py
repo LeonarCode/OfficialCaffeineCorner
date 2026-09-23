@@ -1,5 +1,8 @@
+from datetime import timedelta
+
 from rest_framework import serializers
 from .models import Category, Product, Variant, Rating, Order, OrderItem, CartItem, LoyaltyPoint, TownZone, VALID_TABLE_NUMBERS
+from . import rider_availability
 import re
 
 
@@ -49,9 +52,15 @@ class ProductSerializer(serializers.ModelSerializer):
         return obj.ratings.count()
 
 class TownZoneSerializer(serializers.ModelSerializer):
+    has_available_rider = serializers.SerializerMethodField()
+
     class Meta:
         model  = TownZone
-        fields = ['id', 'name', 'delivery_fee', 'estimated_time', 'center_latitude', 'center_longitude']
+        fields = ['id', 'name', 'delivery_fee', 'estimated_time', 'center_latitude', 'center_longitude',
+                  'has_available_rider']
+
+    def get_has_available_rider(self, obj):
+        return rider_availability.zone_has_available_rider(obj)
 
 
 class MarkDeliveredSerializer(serializers.Serializer):
@@ -76,6 +85,8 @@ class OrderSerializer(serializers.ModelSerializer):
     subtotal    = serializers.DecimalField(max_digits=10, decimal_places=2, read_only=True)
     item_count  = serializers.IntegerField(read_only=True)
     zone_name   = serializers.CharField(source='zone.name', read_only=True, default=None)
+    zone_estimated_time = serializers.CharField(source='zone.estimated_time', read_only=True, default=None)
+    expected_ready_at = serializers.SerializerMethodField()
 
     class Meta:
         model = Order
@@ -84,12 +95,20 @@ class OrderSerializer(serializers.ModelSerializer):
             'status', 'payment_method', 'payment_status',
             'order_type', 'downpayment_amount', 'remaining_balance',
             'event_date', 'pax', 'table_number',
-            'zone', 'zone_name', 'delivery_fee',
+            'zone', 'zone_name', 'zone_estimated_time', 'delivery_fee',
             'gcash_ref', 'discount', 'points_earned', 'points_used',
             'items', 'subtotal', 'total_price', 'item_count',
-            'created_at', 'updated_at', 'delivery_latitude', 'delivery_longitude'
+            'created_at', 'updated_at', 'delivery_latitude', 'delivery_longitude',
+            'expected_ready_at',
         ]
         read_only_fields = ['status', 'payment_status', 'points_earned', 'created_at', 'updated_at']
+
+    def get_expected_ready_at(self, obj):
+        # Only meaningful while the order is still on its way — once it's
+        # delivered or cancelled there's nothing left to be "expected".
+        if obj.status in ('delivered', 'cancelled'):
+            return None
+        return obj.created_at + timedelta(minutes=rider_availability.production_minutes_for(obj))
 
 
 class CreateOrderSerializer(serializers.Serializer):
@@ -157,6 +176,11 @@ class CreateOrderSerializer(serializers.Serializer):
         # completely anonymous order tied to no table and no contact info.
         if order_type == 'dine_in' and attrs.get('table_number') not in VALID_TABLE_NUMBERS:
             raise serializers.ValidationError({'table_number': 'A valid table number is required for dine-in orders.'})
+
+        # A dine-in order is paid at the counter or with GCash. "Cash on delivery" has no
+        # meaning at a table, and would only put a nonsense payment method on the record.
+        if order_type == 'dine_in' and attrs.get('payment_method') not in ('counter', 'gcash'):
+            raise serializers.ValidationError({'payment_method': 'Dine-in orders are paid at the counter or with GCash.'})
 
         return attrs
 

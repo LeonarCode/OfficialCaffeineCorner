@@ -1,8 +1,28 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { getProducts, getCategories } from '../services/productService'
-import { createOrder } from '../services/orderService'
+import { createOrder, createPayMongoSource, verifyPaymongoPayment } from '../services/orderService'
 import Card from '../components/Card'
+
+// The order a customer is paying for in GCash. GCash sends them to another site and back, and
+// this page is rebuilt on the way (the cart is gone), so what we need to finish the trip —
+// which order, which table, how much — waits here. Dine-in customers usually aren't signed in,
+// so unlike regular checkout this can't lean on the Orders page.
+const PENDING_KEY = 'pending_dinein_order'
+
+const PAYMENT_OPTIONS = [
+  { id: 'counter', icon: '💳', label: 'At the counter' },
+  { id: 'gcash',   icon: '📱', label: 'GCash' },
+]
+
+// What the customer is told when they come back from (or can't get to) GCash.
+const GCASH_VIEWS = {
+  checking: { icon: '⏳', title: 'Confirming your payment…', text: 'One moment — we are checking with GCash.' },
+  paid:     { icon: '☕', title: 'Order Placed!',            text: 'Payment received via GCash. Your order is being prepared.' },
+  pending:  { icon: '🕒', title: 'Order Placed',             text: "We haven't received GCash's confirmation yet. If you already paid, show this order number to our staff — they'll check it." },
+  failed:   { icon: '⚠️', title: 'Payment not completed',    text: 'Your order is saved, but the GCash payment did not go through.' },
+  error:    { icon: '⚠️', title: 'Order Placed',             text: "We couldn't open GCash just now." },
+}
 
 const DineInMenu = () => {
   const [searchParams]  = useSearchParams()
@@ -16,13 +36,21 @@ const DineInMenu = () => {
   const [cart,           setCart]           = useState([])
   const [showCart,       setShowCart]       = useState(false)
   const [form,           setForm]           = useState({ email: '', phone: '', notes: '' })
+  const [paymentMethod,  setPaymentMethod]  = useState('counter')
   const [placing,        setPlacing]        = useState(false)
   const [orderSuccess,   setOrderSuccess]   = useState(null)
+  const [gcash,          setGcash]          = useState(null)   // the GCash trip: { state, order, retrying }
   const [errors,         setErrors]         = useState({})
+  const returnHandled = useRef(false)                            // (dev StrictMode runs effects twice)
 
   useEffect(() => {
     if (!tableNumber) { navigate('/home'); return }
     fetchData()
+    const outcome = searchParams.get('payment')
+    if ((outcome === 'success' || outcome === 'failed') && !returnHandled.current) {
+      returnHandled.current = true
+      returnFromGcash(outcome)
+    }
   }, [])
 
   const fetchData = async () => {
@@ -74,6 +102,59 @@ const DineInMenu = () => {
   // checked if they do type one in, same as the backend (CreateOrderSerializer).
   const isFormValid = form.email && (!form.phone || validatePhone(form.phone)) && cart.length > 0
 
+  // Sends the customer to GCash to pay for `order` ({ id, table, total }). The amount isn't sent:
+  // the server works out what to charge from the order itself.
+  const startGcash = async (order) => {
+    const res = await createPayMongoSource({
+      order_id:    order.id,
+      success_url: `${window.location.origin}/menu?table=${tableNumber}&payment=success`,
+      failed_url:  `${window.location.origin}/menu?table=${tableNumber}&payment=failed`,
+    })
+    const url = res.data?.checkout_url
+    if (!/^https:\/\//i.test(url || '')) throw new Error('GCash did not give a payment page')
+    localStorage.setItem(PENDING_KEY, JSON.stringify(order))
+    window.location.href = url            // same tab: on a phone a new tab is easy to lose, and GCash opens its app from here
+  }
+
+  const readPendingOrder = () => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(PENDING_KEY))
+      return saved && String(saved.table) === String(tableNumber) ? saved : null
+    } catch { return null }
+  }
+
+  // The customer is back from GCash (?payment=success|failed in the address).
+  const returnFromGcash = async (outcome) => {
+    const order = readPendingOrder()
+    navigate(`/menu?table=${tableNumber}`, { replace: true })   // so refreshing doesn't do this again
+    if (!order) return                                            // a different phone, or cleared storage: just show the menu
+    if (outcome === 'failed') { setGcash({ state: 'failed', order }); return }
+
+    setGcash({ state: 'checking', order })
+    // GCash can take a few seconds to report the payment: ask a few times before giving up.
+    for (let attempt = 0; attempt < 6; attempt++) {
+      try {
+        const res = await verifyPaymongoPayment(order.id)
+        if (['paid', 'downpayment'].includes(res.data.payment_status)) {
+          localStorage.removeItem(PENDING_KEY)
+          setGcash({ state: 'paid', order })
+          return
+        }
+      } catch { /* the next attempt may get through */ }
+      await new Promise(resolve => setTimeout(resolve, 2000))
+    }
+    setGcash({ state: 'pending', order })
+  }
+
+  const retryGcash = async () => {
+    setGcash(prev => ({ ...prev, retrying: true }))
+    try {
+      await startGcash(gcash.order)
+    } catch {
+      setGcash(prev => ({ ...prev, state: 'error', retrying: false }))
+    }
+  }
+
   const handlePlaceOrder = async () => {
     const newErrors = {}
     if (form.phone && !validatePhone(form.phone)) newErrors.phone = 'Enter a valid Philippine mobile number (e.g. 09171234567)'
@@ -84,27 +165,91 @@ const DineInMenu = () => {
 
     setPlacing(true)
     setErrors({})
+    let leavingForGcash = false
     try {
       const res = await createOrder({
         email:          form.email,
         phone:          form.phone.replace(/[\s\-]/g, ''),
         address:        `Table ${tableNumber}`,
         notes:          form.notes,
-        payment_method: 'counter',
+        payment_method: paymentMethod,
         order_type:     'dine_in',
         table_number:   tableNumber,
         items:          cart.map(i => ({ product: i.id, quantity: i.qty })),
       })
+
+      if (paymentMethod === 'gcash') {
+        const order = { id: res.data.id, table: tableNumber, total: subtotal }
+        setCart([])
+        setShowCart(false)
+        try {
+          leavingForGcash = true          // keep the button locked while the browser leaves — no second order
+          await startGcash(order)
+        } catch {
+          leavingForGcash = false
+          setGcash({ state: 'error', order })   // the order exists; they can retry or pay at the counter
+        }
+        return
+      }
+
       setOrderSuccess(res.data)
       setCart([])
     } catch (err) {
       const data = err.response?.data
-      const message = data?.phone?.[0] || data?.email?.[0] || data?.error || 'Failed to place order. Please try again.'
+      const message = data?.phone?.[0] || data?.email?.[0] || data?.payment_method?.[0] || data?.error || 'Failed to place order. Please try again.'
       setErrors({ submit: message })
       console.error(err)
     } finally {
-      setPlacing(false)
+      if (!leavingForGcash) setPlacing(false)
     }
+  }
+
+  if (gcash) {
+    const view = GCASH_VIEWS[gcash.state]
+    const canRetry = gcash.state === 'failed' || gcash.state === 'error'
+    return (
+      <div className='min-h-screen bg-[#FAF6F0] flex items-center justify-center p-6'>
+        <div className='bg-white rounded-3xl p-8 max-w-sm w-full text-center shadow-xl' data-gcash-state={gcash.state}>
+          <div className='text-5xl mb-4'>{view.icon}</div>
+          <h2 className='text-[#2C1503] text-2xl font-bold mb-1'>{view.title}</h2>
+          <p className='text-gray-400 text-sm mb-4'>{view.text}</p>
+          <div className='bg-[#FAF6F0] rounded-xl p-4 mb-6 text-left'>
+            <div className='flex justify-between text-sm mb-1'>
+              <span className='text-gray-400'>Order ID</span>
+              <span className='text-[#2C1503] font-bold'>#CC-{String(gcash.order.id).padStart(5, '0')}</span>
+            </div>
+            <div className='flex justify-between text-sm mb-1'>
+              <span className='text-gray-400'>Table</span>
+              <span className='text-[#2C1503] font-bold'>Table {gcash.order.table}</span>
+            </div>
+            <div className='flex justify-between text-sm'>
+              <span className='text-gray-400'>Total</span>
+              <span className='text-[#2C1503] font-bold'>₱{Number(gcash.order.total).toFixed(2)}</span>
+            </div>
+          </div>
+          {canRetry && (
+            <>
+              <button
+                onClick={retryGcash}
+                disabled={gcash.retrying}
+                className='w-full bg-[#C4A882] hover:bg-[#b8976e] disabled:opacity-50 text-[#2C1503] font-bold py-3 rounded-xl text-sm transition'
+              >
+                {gcash.retrying ? 'Opening GCash…' : '📱 Try GCash again'}
+              </button>
+              <p className='text-[#C4A882] text-xs mt-3'>Or just pay at the counter — tell our staff your order number.</p>
+            </>
+          )}
+          {gcash.state !== 'checking' && (
+            <button
+              onClick={() => { setGcash(null); fetchData() }}
+              className='mt-4 w-full bg-[#2C1503] text-white font-bold py-3 rounded-xl text-sm'
+            >
+              Order Again
+            </button>
+          )}
+        </div>
+      </div>
+    )
   }
 
   if (orderSuccess) return (
@@ -128,6 +273,7 @@ const DineInMenu = () => {
           </div>
         </div>
         <p className='text-[#C4A882] text-xs'>Please pay at the counter. Thank you! 😊</p>
+        <p className='text-gray-400 text-xs mt-2'>📧 We'll email your order details to {form.email}.</p>
         <button
           onClick={() => { setOrderSuccess(null); fetchData() }}
           className='mt-4 w-full bg-[#2C1503] text-white font-bold py-3 rounded-xl text-sm'
@@ -252,7 +398,7 @@ const DineInMenu = () => {
                 {/* Email input */}
                 <input
                   type='email'
-                  placeholder='Your email (for receipt)'
+                  placeholder='Your email (we send your order details here)'
                   value={form.email}
                   onChange={e => setForm(prev => ({ ...prev, email: e.target.value }))}
                   className='w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-[#C4A882] mb-2'
@@ -282,7 +428,28 @@ const DineInMenu = () => {
                   <span className='text-gray-500 text-sm font-semibold'>Total</span>
                   <span className='text-[#2C1503] font-bold text-lg'>₱{subtotal.toFixed(2)}</span>
                 </div>
-                <p className='text-gray-400 text-xs mb-3 text-center'>💳 Pay at the counter after ordering</p>
+                <p className='text-gray-500 text-xs font-semibold mb-2'>How would you like to pay?</p>
+                <div className='grid grid-cols-2 gap-2 mb-2' role='group' aria-label='Payment method'>
+                  {PAYMENT_OPTIONS.map(option => (
+                    <button
+                      key={option.id}
+                      type='button'
+                      onClick={() => setPaymentMethod(option.id)}
+                      aria-pressed={paymentMethod === option.id}
+                      className={`border rounded-xl py-2.5 text-xs font-bold transition
+                        ${paymentMethod === option.id
+                          ? 'border-[#C4A882] bg-[#FAF6F0] text-[#2C1503]'
+                          : 'border-gray-200 text-gray-400'}`}
+                    >
+                      {option.icon} {option.label}
+                    </button>
+                  ))}
+                </div>
+                <p className='text-gray-400 text-xs mb-3 text-center'>
+                  {paymentMethod === 'gcash'
+                    ? `You'll be taken to GCash to pay ₱${subtotal.toFixed(2)}. Your order is confirmed once it goes through.`
+                    : '💳 Pay at the counter after ordering'}
+                </p>
                 {errors.submit && (
                   <p className='text-red-400 text-xs text-center mb-2'>{errors.submit}</p>
                 )}
@@ -291,7 +458,7 @@ const DineInMenu = () => {
                   disabled={placing || !isFormValid}
                   className='w-full bg-[#C4A882] hover:bg-[#b8976e] disabled:opacity-50 text-[#2C1503] font-bold py-3 rounded-xl text-sm transition'
                 >
-                  {placing ? 'Placing Order...' : '→ PLACE ORDER'}
+                  {placing ? 'Placing Order...' : paymentMethod === 'gcash' ? '📱 PLACE ORDER & PAY' : '→ PLACE ORDER'}
                 </button>
               </div>
             )}

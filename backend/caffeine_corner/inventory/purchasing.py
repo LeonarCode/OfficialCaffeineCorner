@@ -12,7 +12,7 @@ PO's reference, so the PO, the item's history and the stock level always agree.
 Used by the admin (inventory/admin.py) and the Auto-Generate button
 (inventory/views.py).
 """
-import re
+import logging
 from dataclasses import dataclass, field
 from decimal import Decimal
 
@@ -20,7 +20,10 @@ from django.db import transaction
 from django.db.models import F, Sum
 from django.utils import timezone
 
+from . import emails
 from .models import Inventory, PurchaseOrder, PurchaseOrderItem, StockMovement
+
+logger = logging.getLogger('caffeine_corner.mail')
 
 ZERO = Decimal('0')
 
@@ -33,22 +36,16 @@ class PurchaseOrderError(Exception):
 
 
 # ─── Numbering ────────────────────────────────────────────────────────────────
+# The number is the order's own database id, so it can only ever be assigned
+# once — no scanning for the highest taken number, no gaps to "continue from",
+# no chance of two staff members racing for the same number (each row gets its
+# own id from the database itself, atomically, the moment it is inserted).
+# PurchaseOrder.save() is what actually assigns it (a blank reference, on any
+# save); this is just the format, kept here so it's only written once.
 
-def next_reference(today=None):
-    """
-    The next free "PO-YYYYMM-NNNN". Numbered from the highest existing number
-    that month, not from a row count — counting collided (and 500'd on the
-    unique constraint) as soon as any PO had been deleted or typed by hand.
-    """
-    today = today or timezone.localdate()
-    prefix = f'PO-{today:%Y%m}-'
-    pattern = re.compile(re.escape(prefix) + r'(\d+)$')
-    taken = PurchaseOrder.objects.filter(reference__startswith=prefix).values_list('reference', flat=True)
-    highest = max((int(m.group(1)) for m in map(pattern.match, taken) if m), default=0)
-    number = highest + 1
-    while PurchaseOrder.objects.filter(reference=f'{prefix}{number:04d}').exists():
-        number += 1
-    return f'{prefix}{number:04d}'
+def reference_for(po):
+    """The number a saved PO's own id turns into — purchase order #42 is "PO-000042"."""
+    return f'PO-{po.pk:06d}'
 
 
 # ─── State ────────────────────────────────────────────────────────────────────
@@ -156,6 +153,28 @@ def receive_remaining(po, user):
     return received
 
 
+@transaction.atomic
+def close_partial(po):
+    """
+    Accepts a partially-received order as final, for when the supplier isn't
+    sending the rest: every line still short is lowered to what actually
+    arrived — so it reads as fully received, the way the order really turned
+    out — and the order itself becomes Fully Received.
+
+    What used to be a raw edit of "Order qty" on an already-saved line (typed
+    straight into the field, with nothing to say *why* it changed) is now
+    only ever done this way — a deliberate, named action, not a value that
+    quietly wasn't what was actually ordered any more.
+    """
+    if po.status != 'partial':
+        raise PurchaseOrderError(f'{po.reference} is not partially received (it is “{po.get_status_display()}”).')
+    for line in _lines(po):
+        if line.quantity_received < line.quantity_ordered:
+            line.quantity_ordered = line.quantity_received
+            line.save(update_fields=['quantity_ordered'])
+    sync_status(po)
+
+
 def mark_sent(po):
     if po.status != 'draft':
         raise PurchaseOrderError(f'{po.reference} is not a draft (it is “{po.get_status_display()}”).')
@@ -169,10 +188,54 @@ def cancel(po):
     if any(line.quantity_received > 0 for line in _lines(po)):
         raise PurchaseOrderError(
             f'{po.reference} has already received some stock, so it cannot be cancelled. '
-            'Lower the ordered quantities to what actually arrived instead.'
+            'Close it as partially received instead.'
         )
     po.status = 'cancelled'
     po.save(update_fields=['status'])
+
+
+# ─── Emailing the supplier ────────────────────────────────────────────────────
+
+def email_to_supplier(po, user):
+    """
+    Emails the purchase order to the supplier (see inventory/emails.py for what it
+    says). Sending a draft is what "sending the order" means, so a draft becomes
+    "sent"; an order that is already sent (or partly received) just goes out again,
+    marked in the email as an updated copy.
+
+    Returns the address it was sent to. Raises PurchaseOrderError — with a message
+    written for staff — if it may not or could not be sent; nothing is changed then.
+    """
+    supplier = po.supplier
+    if po.status == 'cancelled':
+        raise PurchaseOrderError(f'{po.reference} is cancelled, so it can’t be emailed.')
+    if is_settled(po):
+        raise PurchaseOrderError(f'{po.reference} has been received in full — there is nothing left to order.')
+    address = (supplier.email or '').strip()
+    if not address:
+        raise PurchaseOrderError(
+            f'{supplier.name} has no email address on file. Add one on the supplier’s page, then try again.'
+        )
+    if not _lines(po):
+        raise PurchaseOrderError(f'{po.reference} has no items yet — add what you are ordering first.')
+
+    try:
+        emails.send_purchase_order(po, user, address)
+    except Exception as error:                                # noqa: BLE001 — SMTP, DNS, timeouts…: all mean "not sent"
+        logger.exception('Purchase order %s could not be emailed to %s', po.reference, address)
+        reason = f'{type(error).__name__}: {error}'[:160]
+        raise PurchaseOrderError(
+            f'The email to {supplier.name} ({address}) could not be sent — {reason}. '
+            f'Nothing was changed; check the mail settings and try again.'
+        ) from error
+
+    po.emailed_at = timezone.now()
+    changed = ['emailed_at']
+    if po.status == 'draft':
+        po.status = 'sent'
+        changed.append('status')
+    po.save(update_fields=changed)
+    return address
 
 
 # ─── What needs reordering ────────────────────────────────────────────────────

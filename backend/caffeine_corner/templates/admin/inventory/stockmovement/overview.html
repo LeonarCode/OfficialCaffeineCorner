@@ -1,0 +1,184 @@
+{% load i18n humanize %}
+{% comment %}
+  The overview above the Stock Movements list (StockMovementAdmin.list_before_template).
+  `movements` is inventory.movement_stats.build_overview(): what the list below is
+  showing, boiled down to four numbers, one chart and two "who's biggest" lists.
+  Styles: static/css/admin-analytics.css (.an-*).
+{% endcomment %}
+{% if movements %}
+<div class="an-wrap" id="smOverview">
+
+  <div class="an-head">
+    <div>
+      <h2 class="an-title text-font-important-light dark:text-font-important-dark">{% trans "Stock movement overview" %}</h2>
+      <p class="an-sub text-font-subtle-light dark:text-font-subtle-dark">
+        {{ movements.label }} · {{ movements.count|intcomma }} movement{{ movements.count|pluralize }}
+        {% if movements.compare_label %}· changes compare with {{ movements.compare_label }}{% endif %}
+      </p>
+    </div>
+    <div class="an-actions">
+      <div class="an-chips" role="group" aria-label="{% trans 'Period' %}">
+        {% for chip in period_chips %}
+        <a class="an-chip{% if chip.active %} is-active{% endif %}" href="{{ chip.url }}"{% if chip.active %} aria-current="true"{% endif %}>{{ chip.label }}</a>
+        {% endfor %}
+      </div>
+      <a href="{{ add_url }}"
+         class="font-medium inline-flex items-center gap-1 relative rounded-default justify-center whitespace-nowrap cursor-pointer px-3 py-1.5 text-sm border border-base-200 bg-primary-600 border-transparent text-white hover:bg-primary-600/80">
+        <span class="material-symbols-outlined text-sm -ml-0.5">add</span>
+        {% trans "Record stock in / out" %}
+      </a>
+    </div>
+  </div>
+
+  <div class="an-cards">
+    {% for card in movements.cards %}
+    <div class="an-card" data-card="{{ card.key }}">
+      <div class="an-kpi-top">
+        <span class="an-icon an-icon--{{ card.accent }}"><span class="material-symbols-outlined">{{ card.icon }}</span></span>
+        <span class="an-kpi-label text-font-subtle-light dark:text-font-subtle-dark">{{ card.label }}</span>
+      </div>
+      <div class="an-kpi-value text-font-important-light dark:text-font-important-dark">{{ card.value }}</div>
+      <div class="an-kpi-foot text-font-subtle-light dark:text-font-subtle-dark">
+        {% if card.delta %}<span class="an-delta an-delta--{{ card.delta.tone }}">{{ card.delta.text }}</span>{% endif %}
+        <span>{{ card.foot }}</span>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  {% if movements.has_data %}
+  <div class="an-pair">
+    <div class="an-card">
+      <p class="an-card-title text-font-important-light dark:text-font-important-dark">{% trans "Stock coming in" %}</p>
+      <p class="an-sub text-font-subtle-light dark:text-font-subtle-dark">
+        {% trans "Deliveries and purchases, in pesos, per" %}
+        {% if movements.chart.granularity == "daily" %}{% trans "day" %}{% elif movements.chart.granularity == "weekly" %}{% trans "week" %}{% else %}{% trans "month" %}{% endif %}
+      </p>
+      <div class="an-chart">
+        <canvas id="smChartIn" role="img" aria-label="{% trans 'Stock received over time' %}"></canvas>
+      </div>
+    </div>
+    <div class="an-card">
+      <p class="an-card-title text-font-important-light dark:text-font-important-dark">{% trans "Stock going out" %}</p>
+      <p class="an-sub text-font-subtle-light dark:text-font-subtle-dark">
+        {% trans "Used in orders and wasted, in pesos, per" %}
+        {% if movements.chart.granularity == "daily" %}{% trans "day" %}{% elif movements.chart.granularity == "weekly" %}{% trans "week" %}{% else %}{% trans "month" %}{% endif %}
+      </p>
+      <div class="an-chart">
+        <canvas id="smChartOut" role="img" aria-label="{% trans 'Stock used in orders and wasted over time' %}"></canvas>
+      </div>
+      <div class="an-legend text-font-subtle-light dark:text-font-subtle-dark">
+        <span><i class="an-dot" style="background:#6f4e37"></i>{% trans "Used in orders" %}</span>
+        <span><i class="an-dot" style="background:#e0862b"></i>{% trans "Waste &amp; adjustments" %}</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="an-pair">
+    <div class="an-card">
+      <p class="an-card-title text-font-important-light dark:text-font-important-dark">{% trans "Most used items" %}</p>
+      <p class="an-sub text-font-subtle-light dark:text-font-subtle-dark">{% trans "By cost of what orders used" %}</p>
+      {% if movements.top_used %}
+      <ul class="an-list" id="smTopUsed">
+        {% for item in movements.top_used %}
+        <li>
+          <div class="an-row-top">
+            <a class="an-row-name an-link" href="{% url 'admin:inventory_inventory_change' item.id %}">{{ item.name }}</a>
+            <span class="an-row-val text-font-important-light dark:text-font-important-dark">{{ item.value_text }}</span>
+          </div>
+          <div class="an-track"><div class="an-fill" style="width:{{ item.pct }}%;--an-accent:#6f4e37"></div></div>
+          <div class="an-row-sub text-font-subtle-light dark:text-font-subtle-dark">{{ item.qty_text }} used</div>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="an-none text-font-subtle-light dark:text-font-subtle-dark">{% trans "No orders used any stock in this period." %}</p>
+      {% endif %}
+    </div>
+
+    <div class="an-card">
+      <p class="an-card-title text-font-important-light dark:text-font-important-dark">{% trans "Biggest waste &amp; write-offs" %}</p>
+      <p class="an-sub text-font-subtle-light dark:text-font-subtle-dark">{% trans "Spoilage, adjustments and returns" %}</p>
+      {% if movements.top_lost %}
+      <ul class="an-list" id="smTopLost">
+        {% for item in movements.top_lost %}
+        <li>
+          <div class="an-row-top">
+            <a class="an-row-name an-link" href="{% url 'admin:inventory_inventory_change' item.id %}">{{ item.name }}</a>
+            <span class="an-row-val text-font-important-light dark:text-font-important-dark">{{ item.value_text }}</span>
+          </div>
+          <div class="an-track"><div class="an-fill" style="width:{{ item.pct }}%;--an-accent:#e0862b"></div></div>
+          <div class="an-row-sub text-font-subtle-light dark:text-font-subtle-dark">{{ item.qty_text }} · mostly {{ item.reason }}</div>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="an-none text-font-subtle-light dark:text-font-subtle-dark">{% trans "Nothing wasted or written off — nice." %}</p>
+      {% endif %}
+    </div>
+  </div>
+  {{ movements.chart|json_script:"sm-chart-data" }}
+  {% else %}
+  <div class="an-card">
+    <p class="an-card-title text-font-important-light dark:text-font-important-dark">{% trans "No stock movements in this period" %}</p>
+    <p class="an-none text-font-subtle-light dark:text-font-subtle-dark">
+      {% trans "Try a longer period above, or record a delivery or write-off with “Record stock in / out”." %}
+    </p>
+  </div>
+  {% endif %}
+</div>
+
+{% if movements.has_data %}
+<script>
+(function () {
+  var dataEl = document.getElementById('sm-chart-data')
+  var canvasIn = document.getElementById('smChartIn')
+  var canvasOut = document.getElementById('smChartOut')
+  if (!dataEl || !canvasIn || !canvasOut || typeof Chart === 'undefined') return
+  var data = JSON.parse(dataEl.textContent)
+  var charts = []
+
+  function css(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim() }
+  function dark() { return document.documentElement.classList.contains('dark') }
+  function peso(v) { return '₱' + Number(v).toLocaleString('en-PH', { maximumFractionDigits: 0 }) }
+  function pesoExact(v) { return '₱' + Number(v).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }
+  var bar = function (label, values, color) {
+    return { label: label, data: values, backgroundColor: color, borderRadius: 3, maxBarThickness: 26 }
+  }
+
+  function make(canvas, datasets, stacked, legend) {
+    var grid = css(dark() ? '--color-base-700' : '--color-base-200') || (dark() ? '#374151' : '#e5e7eb')
+    var tick = css(dark() ? '--color-base-400' : '--color-base-500') || '#6b7280'
+    return new Chart(canvas.getContext('2d'), {
+      type: 'bar',
+      data: { labels: data.labels, datasets: datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: function (ctx) { return ctx.dataset.label + ': ' + pesoExact(ctx.parsed.y) } } },
+        },
+        scales: {
+          x: { stacked: stacked, grid: { display: false }, ticks: { color: tick, maxRotation: 0, autoSkip: true, maxTicksLimit: 10 } },
+          y: { stacked: stacked, beginAtZero: true, grid: { color: grid }, ticks: { color: tick, callback: peso } },
+        },
+      },
+    })
+  }
+
+  function draw() {
+    charts.forEach(function (c) { c.destroy() })
+    charts = [
+      make(canvasIn, [bar('Stock received', data.received, '#3f9d6b')], false),
+      make(canvasOut, [bar('Used in orders', data.used, '#6f4e37'), bar('Waste & adjustments', data.lost, '#e0862b')], true),
+    ]
+  }
+
+  draw()
+  new MutationObserver(draw).observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })   // light <-> dark
+})()
+</script>
+{% endif %}
+{% endif %}

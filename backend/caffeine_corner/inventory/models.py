@@ -1,28 +1,25 @@
+import uuid
+
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.conf import settings
 from django.core.validators import MinValueValidator
 from online_shop.models import Product
 from decimal import Decimal
 
+from . import units
 
-class InventoryCategory(models.Model):
-    name = models.CharField(max_length=100, unique=True)
-    description = models.TextField(blank=True)
-
-    class Meta:
-        ordering = ("name",)
-        verbose_name = "Inventory Category"
-        verbose_name_plural = "Inventory Categories"
-
-    def __str__(self):
-        return self.name
 
 
 class Supplier(models.Model):
-    name         = models.CharField(max_length=200)
-    contact_name = models.CharField(max_length=100, blank=True)
+    # A supplier here is a company, not an individual — contact_name is just
+    # who to reach there, and is optional since not every supplier gives one.
+    name         = models.CharField(max_length=200, help_text="Company / business name.")
+    contact_name = models.CharField(max_length=100, blank=True, help_text="Person to reach at this supplier, if any.")
     email        = models.EmailField(blank=True)
     phone        = models.CharField(max_length=30, blank=True)
+    website      = models.URLField(blank=True, help_text="The supplier's official website, if they have one.")
+    social       = models.URLField(blank=True, help_text="The supplier's social account (fb, ig, tiktok)")
     address      = models.TextField(blank=True)
     notes        = models.TextField(blank=True)
     is_active    = models.BooleanField(default=True)
@@ -39,11 +36,6 @@ class Supplier(models.Model):
 
 
 class Inventory(models.Model):
-    category          = models.ForeignKey(
-                            InventoryCategory,
-                            on_delete=models.PROTECT,
-                            related_name="items",
-                        )
     supplier          = models.ForeignKey(
                             Supplier,
                             on_delete=models.SET_NULL,
@@ -85,12 +77,12 @@ class Inventory(models.Model):
     last_updated      = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ("category", "name")
+        ordering = ["name"]
         verbose_name = "Inventory Item"
         verbose_name_plural = "Inventory Items"
         indexes = [
             models.Index(fields=["sku"]),
-            models.Index(fields=["category", "name"]),
+            models.Index(fields=["name"]),
         ]
 
     def __str__(self):
@@ -226,11 +218,16 @@ class PurchaseOrder(models.Model):
                       default="draft",
                       db_index=True,
                   )
-    reference   = models.CharField(max_length=100, unique=True,
-                                   help_text="PO number e.g. PO-2026-0001")
+    # Never typed — numbered from this row's own id the moment it exists (see
+    # save() below) and shown read-only after that (PurchaseOrderAdmin).
+    reference   = models.CharField(max_length=100, unique=True, verbose_name="PO number",
+                                   help_text="Numbered automatically from the order's own id, e.g. PO-000042.")
     ordered_at  = models.DateTimeField(auto_now_add=True)
     expected_at = models.DateField(null=True, blank=True)
     received_at = models.DateField(null=True, blank=True)
+    # When staff last emailed this order to the supplier (set by purchasing.email_to_supplier;
+    # never typed in, so it is not on any form).
+    emailed_at  = models.DateTimeField(null=True, blank=True, editable=False)
     notes       = models.TextField(blank=True)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -244,6 +241,34 @@ class PurchaseOrder(models.Model):
         ordering = ("-ordered_at",)
         verbose_name = "Purchase Order"
         verbose_name_plural = "Purchase Orders"
+
+    # A short-lived placeholder a brand-new, still-blank order gets for the one save
+    # this column can't do without a value (required + unique). Different every time
+    # (so two staff members creating an order at the same moment can never collide on
+    # it), and never seen past that one save — the real number replaces it immediately
+    # after, in save() below.
+    _PENDING_PREFIX = 'PO-PENDING-'
+
+    def save(self, *args, **kwargs):
+        # A blank reference is numbered from this row's own id (see
+        # inventory.purchasing.reference_for — the one place that format lives). A
+        # brand-new row's id doesn't exist until it has been saved once, so that
+        # case takes two saves: the placeholder above holds the column the first
+        # time, then the real number replaces it now that there is an id to build
+        # it from. An existing row already has its id, so blanking one out (staff
+        # clearing the field on an order that already exists) numbers it in the one
+        # save. A reference that's already there — typed by staff, or already
+        # numbered — is left exactly alone, and this is just an ordinary save().
+        if self.reference:
+            return super().save(*args, **kwargs)
+        from . import purchasing                                  # local: purchasing.py imports this module
+        if self._state.adding:
+            self.reference = f'{self._PENDING_PREFIX}{uuid.uuid4().hex}'
+            super().save(*args, **kwargs)
+            self.reference = purchasing.reference_for(self)
+            return super().save(update_fields=['reference'])
+        self.reference = purchasing.reference_for(self)
+        return super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.reference} — {self.supplier.name} ({self.get_status_display()})"
@@ -312,7 +337,11 @@ class Ingredient(models.Model):
                     max_digits=10, decimal_places=2,
                     validators=[MinValueValidator(0)],
                 )
-    unit      = models.CharField(max_length=20)
+    unit      = models.CharField(
+                    max_length=20,
+                    help_text="Can be written in a different metric unit than the inventory item "
+                               "itself (e.g. ml for an item tracked in L) — it's converted automatically.",
+                )
     notes     = models.TextField(blank=True)
 
     class Meta:
@@ -320,6 +349,20 @@ class Ingredient(models.Model):
         verbose_name = "Ingredient"
         verbose_name_plural = "Ingredients"
         unique_together = (("product", "inventory"),)
+
+    def clean(self):
+        # Only an error when both units are ones inventory.units actually
+        # recognizes and they're not the same kind of measurement (weight vs
+        # volume — there's no converting one into the other). A count-style
+        # unit like "pcs" on either side is left alone, same as always.
+        if self.unit and self.inventory_id and self.inventory.unit:
+            from_family = units.family_of(self.unit)
+            to_family = units.family_of(self.inventory.unit)
+            if from_family and to_family and from_family != to_family:
+                raise ValidationError({
+                    'unit': f'"{self.unit}" ({from_family}) can’t be converted to '
+                            f'"{self.inventory.unit}" ({to_family}), the inventory item’s unit.',
+                })
 
     def __str__(self):
         return (f"{self.product.name} — "

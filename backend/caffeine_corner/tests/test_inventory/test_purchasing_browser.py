@@ -38,6 +38,11 @@ class PurchaseOrderBrowserTests(browser_testing.AdminBrowserTestCase):
         self.page.locator('.select2-results__option', has_text=text).first.click()
         return row
 
+    def confirm(self, button, submit):
+        """Press a button on the order's page, then the confirmation's own button (nothing happens until that one)."""
+        self.page.get_by_role('link', name=button).click()
+        self.page.get_by_role('button', name=submit).click()
+
     def new_order_with_beans(self, quantity=None):
         self.page.goto(self.url('/admin/inventory/purchaseorder/add/'))
         self.page.select_option('#id_supplier', label=self.supplier.name)
@@ -69,7 +74,7 @@ class PurchaseOrderBrowserTests(browser_testing.AdminBrowserTestCase):
     # ── numbering, receiving, locking ──
     def test_a_new_order_is_numbered_and_receiving_it_puts_stock_in_and_locks_it(self):
         po = self.new_order_with_beans(quantity='4')
-        self.assertRegex(po.reference, r'^PO-\d{6}-0001$')                                   # nobody typed a number
+        self.assertEqual(po.reference, f'PO-{po.pk:06d}')                                    # nobody typed a number
         self.assertEqual((po.status, self.stock()), ('draft', Decimal('10.00')))
 
         self.page.goto(self.url(f'/admin/inventory/purchaseorder/{po.pk}/change/'))
@@ -79,8 +84,8 @@ class PurchaseOrderBrowserTests(browser_testing.AdminBrowserTestCase):
         self.assertEqual(self.stock(), Decimal('11.00'))
         self.assertEqual(self.page.locator('#id_status option:checked').inner_text(), 'Partially Received')
 
-        self.page.get_by_role('link', name='Receive all remaining items').click()            # the rest arrives
-        self.page.wait_for_selector('text=added to stock')
+        self.confirm('Receive all remaining items', 'Add to stock')                          # the rest arrives
+        self.page.wait_for_selector('text=added to stock —')
         self.assertEqual(self.stock(), Decimal('14.00'))                                     # 10 + 1 + 3, not 10 + 1 + 4
         po.refresh_from_db()
         self.assertEqual(po.status, 'received')
@@ -102,8 +107,8 @@ class PurchaseOrderBrowserTests(browser_testing.AdminBrowserTestCase):
         legacy = make_po(self.supplier, [(self.beans, 5)], status='received')                # what PO-2026-0001 looked like
         self.page.goto(self.url(f'/admin/inventory/purchaseorder/{legacy.pk}/change/'))
         self.page.wait_for_selector('text=is marked “Fully Received”')
-        self.page.get_by_role('link', name='Receive all remaining items').click()
-        self.page.wait_for_selector('text=added to stock')
+        self.confirm('Receive all remaining items', 'Add to stock')
+        self.page.wait_for_selector('text=added to stock —')
         self.assertEqual(self.stock(), Decimal('15.00'))
 
     def test_auto_generate_makes_one_draft_and_says_what_it_skipped(self):
@@ -166,7 +171,6 @@ class ItemPageBrowserTests(browser_testing.AdminBrowserTestCase):
     def test_a_new_item_starts_with_opening_stock_that_is_recorded_once(self):
         self.page.goto(self.url('/admin/inventory/inventory/add/'))
         self.assertEqual(self.page.locator('input[name="movements-TOTAL_FORMS"]').count(), 0)   # nothing to record a movement against yet
-        self.page.select_option('#id_category', label='Beans')
         for field, value in [('name', 'Sugar'), ('sku', 'SUGAR-1'), ('unit', 'g'), ('quantity_on_hand', '500'),
                              ('reorder_points', '100'), ('reorder_quantity', '1000'), ('cost_per_unit', '0.06')]:
             self.page.fill(f'#id_{field}', value)

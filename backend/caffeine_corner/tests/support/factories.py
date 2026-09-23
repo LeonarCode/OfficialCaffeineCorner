@@ -1,17 +1,21 @@
 """Small builders for the inventory tests (not a test module: no tests here)."""
 from decimal import Decimal
 
-from inventory.models import Inventory, InventoryCategory, PurchaseOrder, PurchaseOrderItem, Supplier
+from inventory.models import Inventory, PurchaseOrder, PurchaseOrderItem, Supplier
 
 
-def make_supplier(name='Kent Acabo'):
-    return Supplier.objects.get_or_create(name=name)[0]
+def make_supplier(name='Kent Acabo', email=None, **extra):
+    """A supplier — with no email address unless one is asked for (most tests don't need one)."""
+    supplier = Supplier.objects.get_or_create(name=name, defaults=extra)[0]
+    if email is not None and supplier.email != email:
+        supplier.email = email
+        supplier.save(update_fields=['email'])
+    return supplier
 
 
 def make_item(name='Espresso Beans', sku=None, unit='kg', on_hand='10', reorder='2', reorder_qty='10',
-              cost='350', supplier=None, category='Beans', **extra):
+              cost='350', supplier=None, **extra):
     return Inventory.objects.create(
-        category=InventoryCategory.objects.get_or_create(name=category)[0],
         supplier=supplier, name=name, sku=sku or name.upper().replace(' ', '-')[:20], unit=unit,
         quantity_on_hand=Decimal(on_hand), reorder_points=Decimal(reorder),
         reorder_quantity=Decimal(reorder_qty), cost_per_unit=Decimal(cost), **extra,

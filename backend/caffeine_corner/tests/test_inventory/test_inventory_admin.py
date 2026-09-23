@@ -8,15 +8,18 @@ What these guard:
     with no record; on a new item it could be double-counted alongside a movement;
   * Stock Movements had no way to add one, and no sidebar link.
 """
+import warnings
 from decimal import Decimal
 
+from django.contrib import admin
 from django.contrib.auth import get_user_model
+from django.core.paginator import UnorderedObjectListWarning
 from django.db import connection
-from django.test import TestCase
+from django.test import RequestFactory, TestCase
 from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 
-from inventory.models import Inventory, InventoryCategory, StockMovement
+from inventory.models import Inventory, StockMovement
 from online_shop.models import Notification
 from tests.support.admin_forms import admin_post_data
 from tests.support.factories import make_item, make_po, make_supplier
@@ -42,13 +45,12 @@ class AdminTestCase(TestCase):
 class NewItemTests(AdminTestCase):
     def setUp(self):
         super().setUp()
-        self.category = InventoryCategory.objects.create(name='Beans')
         self.supplier = make_supplier()
         self.url = reverse('admin:inventory_inventory_add')
 
     def add_item(self, **fields):
         base = {
-            'category': self.category.pk, 'supplier': self.supplier.pk, 'name': 'Espresso Beans', 'sku': 'BEAN-1',
+            'supplier': self.supplier.pk, 'name': 'Espresso Beans', 'sku': 'BEAN-1',
             'unit': 'kg', 'quantity_on_hand': '10', 'reorder_points': '2', 'reorder_quantity': '10', 'cost_per_unit': '350',
         }
         data = admin_post_data(self.client.get(self.url), **{**base, **fields})
@@ -89,7 +91,7 @@ class NewItemTests(AdminTestCase):
     def test_the_new_item_form_asks_only_for_what_is_needed(self):
         fields = set(self.client.get(self.url).context['adminform'].form.fields)
         self.assertEqual(fields, {
-            'category', 'supplier', 'name', 'sku', 'unit',
+            'supplier', 'name', 'sku', 'unit',
             'quantity_on_hand', 'reorder_points', 'reorder_quantity', 'cost_per_unit', 'expiry_date',
         })                                                       # no "reserved": nothing in the system uses it
 
@@ -234,6 +236,43 @@ class InventoryListTests(AdminTestCase):
 
     def test_reserved_is_no_longer_a_column(self):
         self.assertNotContains(self.client.get(self.url), 'Reserved')
+
+
+class ItemPickerTests(AdminTestCase):
+    """
+    The "Item" dropdown on the purchase-order and stock-movement forms loads 20 items at a
+    time. Those pages must come in a fixed order, or "load more" can repeat some items and
+    skip others once the shop has more than 20.
+    """
+    def picker(self, page):
+        response = self.client.get(reverse('admin:autocomplete'), {
+            'app_label': 'inventory', 'model_name': 'stockmovement', 'field_name': 'inventory', 'term': '', 'page': page,
+        })
+        self.assertEqual(response.status_code, 200)
+        return response.json()
+
+    def test_the_admins_item_list_is_explicitly_ordered(self):
+        request = RequestFactory().get('/')
+        request.user = self.admin
+        self.assertTrue(admin.site._registry[Inventory].get_queryset(request).ordered)
+
+    def test_paging_through_the_items_shows_each_one_once_in_a_fixed_order(self):
+        supplier = make_supplier()
+        beans = make_item('Item 00', supplier=supplier)
+        make_po(supplier, [(beans, 10, 4)], status='partial')                # an open order, so "on order" totals are in play
+        for i in range(1, 26):
+            make_item(f'Item {i:02d}', supplier=supplier)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('error', UnorderedObjectListWarning)      # Django's own alarm for "this page may repeat items"
+            first, second = self.picker(1), self.picker(2)
+
+        self.assertTrue(first['pagination']['more'])
+        self.assertFalse(second['pagination']['more'])
+        shown = [int(row['id']) for row in first['results'] + second['results']]
+        self.assertEqual(len(shown), 26)
+        self.assertEqual(len(set(shown)), 26)                                # nothing repeated, nothing missing
+        self.assertEqual(shown, list(Inventory.objects.order_by('name', 'pk').values_list('pk', flat=True)))
 
 
 class StockMovementPageTests(AdminTestCase):

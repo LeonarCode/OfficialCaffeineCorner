@@ -2,15 +2,13 @@
 // failing silently.
 //
 // HTMX drops 4xx/5xx responses on the floor: nothing is swapped in and nothing
-// is shown. So a rejected "+" on Quick Adjust (say, pressed with the quantity
-// box empty), or a status toggle that hit an expired session, just looked like
-// a button that doesn't work.
+// is shown. So a rejected save (bad input) or a status toggle that hit an
+// expired session just looked like a button that doesn't work.
 //
 // Only requests that change data get a toast (not GET): a background/read
 // request failing shouldn't pop a message up on its own.
 //
-// Guarded by tests/test_online_shop/test_admin_scripts.py (FeedbackScriptGuardTests)
-// and, in a real browser, by tests/test_inventory/test_quick_adjust_browser.py.
+// Guarded by tests/test_online_shop/test_admin_scripts.py (FeedbackScriptGuardTests).
 (function () {
   var TOAST_ID = 'htmx-feedback-toast'
   var hideTimer

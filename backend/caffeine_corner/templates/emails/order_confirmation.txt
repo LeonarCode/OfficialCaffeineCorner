@@ -1,0 +1,27 @@
+{% autoescape off %}{{ headline }}
+{{ intro }}
+
+Order number: {{ order_ref }}
+Placed:       {{ placed_at }}
+Order type:   {{ type_label }}
+Payment:      {{ payment_method }}
+{% for label, value in details %}{{ label }}: {{ value }}
+{% endfor %}
+ITEMS
+{% for item in items %}- {{ item.name }}{% if item.variant %} ({{ item.variant }}){% endif %} x {{ item.qty }}  {{ item.subtotal }}
+{% endfor %}
+{% for label, value in totals %}{{ label }}: {{ value }}
+{% endfor %}TOTAL: {{ total }}
+{% for label, value in payment_lines %}{{ label }}: {{ value }}
+{% endfor %}
+{{ payment_title }}
+{{ payment_note }}
+{% if notes %}
+Your note: {{ notes }}
+{% endif %}{% if orders_url %}
+View your orders: {{ orders_url }}
+{% endif %}
+Something not right? Just reply to this email{% if shop_phone %} or call {{ shop_phone }}{% endif %} and we'll sort it out.
+
+{{ shop_name }} - {{ shop_address }}
+{% endautoescape %}

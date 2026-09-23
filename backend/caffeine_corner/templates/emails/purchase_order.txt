@@ -1,0 +1,23 @@
+{% autoescape off %}PURCHASE ORDER {{ reference }}
+
+{{ greeting }}
+
+{{ intro }}
+
+{% for label, value in details %}{{ label }}: {{ value }}
+{% endfor %}
+ITEMS
+{% for row in rows %}- {{ row.name }} (code {{ row.sku }}): {{ row.ordered }} {{ row.unit }} x {{ row.unit_cost }} = {{ row.total }}{% if any_received %}  [still to come: {{ row.remaining }} {{ row.unit }}]{% endif %}
+{% endfor %}
+TOTAL: {{ total }}
+{% if notes %}
+Notes:
+{{ notes }}
+{% endif %}
+Please reply to this email to confirm the order and your delivery date. If any item is not available, let us know how much you can supply and when.
+
+Thank you,
+{{ shop_name }}
+{% if shop_phone %}{{ shop_phone }}
+{% endif %}{{ shop_address }}
+{% endautoescape %}

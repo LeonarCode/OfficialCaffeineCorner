@@ -11,6 +11,8 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 from django.http import HttpResponse, HttpResponseBadRequest, JsonResponse
 from django.shortcuts import get_object_or_404, render
+from .emails import queue_order_email
+from . import remittance, rider_availability
 from .models import Category, Product, Order, OrderItem, CartItem, LoyaltyPoint, Rating, TownZone
 from .serializer import (
     CategorySerializer, ProductSerializer, RatingSerializer,
@@ -23,6 +25,7 @@ import json
 import base64
 import hashlib
 import requests
+from decimal import Decimal, ROUND_HALF_UP
 from django.contrib import admin
 from django.contrib.admin.views.decorators import staff_member_required
 from django.conf import settings
@@ -188,37 +191,68 @@ def _create_paymongo_payment(source_id, amount, order):
 
 # ─── Create GCash Source ──────────────────────────────────────────────────────
 
+PAYMONGO_TIMEOUT = 15      # seconds: a stalled payment service must not hang the customer's page for ever
+
+
+def _amount_to_charge_cents(order):
+    """
+    What GCash should collect for this order, in centavos, worked out from the
+    order itself: the 30% downpayment when it has one, otherwise everything —
+    items and delivery, less any loyalty points used. This is the same figure the
+    checkout page shows.
+
+    It used to be whatever amount the browser posted, and the payment check
+    (VerifyPaymentStatusView) marks the order paid for whatever the source was
+    for — so paying ₱1 for a ₱500 order got it confirmed as paid.
+    """
+    due = max(order.subtotal + order.delivery_fee - order.discount, Decimal('0'))
+    if order.downpayment_amount > 0:
+        due = due * OrderCreateView.DOWNPAYMENT_RATE
+    return int((due * 100).quantize(Decimal('1'), rounding=ROUND_HALF_UP))
+
+
 class CreatePayMongoSourceView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
-        amount_cents = request.data.get('amount')
-        order_id     = request.data.get('order_id')
-        success_url  = request.data.get('success_url', 'http://localhost:5173/order-success')
-        failed_url   = request.data.get('failed_url', 'http://localhost:5173/checkout')
+        try:
+            order_id = int(request.data.get('order_id'))
+        except (TypeError, ValueError):
+            return Response({'error': 'order_id is required.'}, status=400)
+        success_url = request.data.get('success_url', 'http://localhost:5173/order-success')
+        failed_url  = request.data.get('failed_url', 'http://localhost:5173/checkout')
 
-        if not amount_cents or not order_id:
-            return Response({'error': 'amount and order_id are required.'}, status=400)
+        order = get_object_or_404(Order, id=order_id)
+        if order.payment_method != 'gcash':
+            return Response({'error': 'This order is not a GCash order.'}, status=400)
+        if order.payment_status in ('paid', 'downpayment'):
+            return Response({'error': 'This order has already been paid.'}, status=400)
+        if order.status == 'cancelled':
+            return Response({'error': 'This order was cancelled.'}, status=400)
+        amount_cents = _amount_to_charge_cents(order)            # (any "amount" the browser sends is ignored)
 
-        res = requests.post(
-            "https://api.paymongo.com/v1/sources",
-            headers=_get_paymongo_headers(),
-            json={
-                "data": {
-                    "attributes": {
-                        "amount":   amount_cents,
-                        "currency": "PHP",
-                        "type":     "gcash",
-                        "redirect": {
-                            "success": success_url,
-                            "failed":  failed_url,
+        try:
+            res = requests.post(
+                "https://api.paymongo.com/v1/sources",
+                headers=_get_paymongo_headers(),
+                json={
+                    "data": {
+                        "attributes": {
+                            "amount":   amount_cents,
+                            "currency": "PHP",
+                            "type":     "gcash",
+                            "redirect": {
+                                "success": success_url,
+                                "failed":  failed_url,
+                            }
                         }
                     }
-                }
-            }
-        )
-
-        data = res.json()
+                },
+                timeout=PAYMONGO_TIMEOUT,
+            )
+            data = res.json()
+        except (requests.RequestException, ValueError):
+            return Response({'error': 'Could not reach the payment service. Please try again.'}, status=502)
 
         if res.status_code != 200:
             return Response({'error': data}, status=res.status_code)
@@ -251,11 +285,15 @@ class VerifyPaymentStatusView(APIView):
             # Naverify na dati — huwag na ulit i-charge
             return Response({'payment_status': order.payment_status}, status=200)
 
-        res = requests.get(
-            f"https://api.paymongo.com/v1/sources/{order.paymongo_id}",
-            headers=_get_paymongo_headers(),
-        )
-        data = res.json()
+        try:
+            res = requests.get(
+                f"https://api.paymongo.com/v1/sources/{order.paymongo_id}",
+                headers=_get_paymongo_headers(),
+                timeout=PAYMONGO_TIMEOUT,
+            )
+            data = res.json()
+        except (requests.RequestException, ValueError):
+            return Response({'error': 'Could not reach the payment service. Please try again.'}, status=502)
 
         if res.status_code != 200:
             return Response({'error': data}, status=res.status_code)
@@ -289,6 +327,8 @@ class VerifyPaymentStatusView(APIView):
                     earned = loyalty.earn(order.total_price - order.discount)
                     order.points_earned = earned
                     order.save(update_fields=['points_earned'])
+
+                queue_order_email(order, 'paid')          # "we received your payment" — once: repeat calls return early above
 
         return Response({
             'payment_status': order.payment_status,
@@ -345,7 +385,11 @@ def paymongo_webhook(request):
         source_id    = payment_data["attributes"].get("source", {}).get("id", "")
 
         order = Order.objects.filter(paymongo_id=source_id).first()
-        if order:
+        # PayMongo can deliver the same event twice, and the customer's own return to the
+        # site (VerifyPaymentStatusView) may have recorded the payment first: only the
+        # first one counts, or a delivered order goes back to "confirmed" and the loyalty
+        # points are earned again.
+        if order and order.payment_status not in ('paid', 'downpayment'):
             order.payment_status = "paid"
             order.status         = "confirmed"
             order.save()
@@ -356,6 +400,8 @@ def paymongo_webhook(request):
                 # ← gamitin ang existing LoyaltyPoint.earn() method
                 loyalty, _ = LoyaltyPoint.objects.get_or_create(user=order.user)
                 loyalty.earn(order.total_price)
+
+            queue_order_email(order, 'paid')
 
     return Response({'status': 'ok'}, status=200)
 
@@ -536,6 +582,10 @@ class OrderCreateView(APIView):
                 zone = TownZone.objects.get(id=zone_id, is_active=True)
             except TownZone.DoesNotExist:
                 return Response({'error': 'Selected zone is not available for delivery.'}, status=status.HTTP_400_BAD_REQUEST)
+            if not rider_availability.zone_has_available_rider(zone):
+                return Response({
+                    'error': f'No riders are available for {zone.name} right now. Please try again later or choose pickup/dine-in.'
+                }, status=status.HTTP_400_BAD_REQUEST)
             delivery_fee = zone.delivery_fee
         # pickup & dine_in — walang zone, walang delivery fee
 
@@ -580,7 +630,11 @@ class OrderCreateView(APIView):
             subtotal += price * quantity
 
         # ─── Downpayment — regular lang, kapag umabot ng ₱1000 (kasama delivery fee) ──
-        grand_total           = subtotal + delivery_fee
+        # What the customer actually owes, loyalty points already taken off — the same total the
+        # checkout page shows and GCash charges (30% of it). It used to leave the points out, so an
+        # order just under ₱1,000 after using points was refused Cash on Delivery, and the stored
+        # downpayment was 30% of a bigger number than the one GCash collected.
+        grand_total           = max(subtotal + delivery_fee - discount, 0)
         downpayment_required  = order_type == 'regular' and grand_total >= self.DOWNPAYMENT_THRESHOLD
 
         if downpayment_required and data['payment_method'] != 'gcash':
@@ -614,6 +668,7 @@ class OrderCreateView(APIView):
             if user and order_type in ['regular', 'pickup']:
                 CartItem.objects.filter(user=user).delete()
 
+        queue_order_email(order)                          # "we received your order" — never delays or fails the order
         return Response(OrderSerializer(order).data, status=status.HTTP_201_CREATED)
 
 class OrderDetailView(generics.RetrieveAPIView):
@@ -714,11 +769,19 @@ class RiderStatsView(APIView):
         ).count()
         delivered_total = Order.objects.filter(assigned_rider=request.user, status='delivered').count()
 
+        # Cash the rider is still holding from delivered, paid COD orders — see
+        # online_shop/remittance.py. Staff are the ones who record it as turned
+        # in (Users & Access → the rider's own page); this is read-only, so the
+        # rider always knows what they're expected to bring back.
+        to_remit_count = remittance.outstanding_orders(request.user).count()
+
         return Response({
             'rider_name':       request.user.username or request.user.email,
             'pending_count':    pending_count,
             'delivered_today':  delivered_today,
             'delivered_total':  delivered_total,
+            'to_remit':         str(remittance.outstanding_total(request.user)),
+            'to_remit_count':   to_remit_count,
         })
 
 # ─── Loyalty Points ───────────────────────────────────────

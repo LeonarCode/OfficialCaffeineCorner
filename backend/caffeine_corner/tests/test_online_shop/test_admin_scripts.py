@@ -106,7 +106,7 @@ class CsrfScriptGuardTests(TestCase):
     def test_script_keeps_the_hooks_that_fix_the_403(self):
         source = open(finders.find('js/htmx-csrf.js'), encoding='utf-8').read()
         for needle in (
-            'htmx:configRequest',                # HTMX requests (status/payment toggles, bell, quick adjust)
+            'htmx:configRequest',                # HTMX requests (status/payment toggles, bell)
             "'submit'",                          # normal forms: button click / Enter
             'HTMLFormElement.prototype.submit',  # form.submit() called from a script
             'csrfmiddlewaretoken',               # the hidden field that goes stale
@@ -129,11 +129,12 @@ class CsrfScriptGuardTests(TestCase):
 
 class FeedbackScriptGuardTests(TestCase):
     """
-    static/js/htmx-feedback.js is what turns a rejected admin action (e.g. "+"
-    on Quick Adjust with the box empty) into a visible message, and what stops
-    an expired session from pasting the login page into a table cell. If it
-    stops loading, both go back to failing silently. Its behaviour is checked
-    in a real browser (tests/test_inventory/test_quick_adjust_browser.py).
+    static/js/htmx-feedback.js is what turns a rejected admin action (bad
+    input on an htmx POST) into a visible message, and what stops an expired
+    session from pasting the login page into a table cell. If it stops
+    loading, both go back to failing silently. What follows is the fast,
+    always-on guard that it keeps working; there is no dedicated browser
+    test of the toast itself right now.
     """
 
     SCRIPT = 'js/htmx-feedback.js?v='
@@ -146,7 +147,7 @@ class FeedbackScriptGuardTests(TestCase):
         self.client.force_login(self.admin)
         pages = [
             reverse('admin:index'),
-            reverse('admin:inventory_inventory_changelist'),     # Quick Adjust
+            reverse('admin:inventory_inventory_changelist'),
             reverse('admin:online_shop_order_changelist'),       # status / payment toggles
         ]
         for url in pages:
@@ -164,3 +165,37 @@ class FeedbackScriptGuardTests(TestCase):
         source = open(finders.find('js/htmx-feedback.js'), encoding='utf-8').read()
         self.assertIn('textContent', source)
         self.assertNotIn('innerHTML', source)
+
+
+class AdminThemeCssGuardTests(TestCase):
+    """
+    static/css/admin-theme.css is what keeps the header/sidebar on-brand and
+    its buttons readable (see the long comments in that file for exactly
+    which bugs those rules fix). It used to be loaded plainly — an edit to it
+    changed nothing for anyone still running a cached copy, which is exactly
+    how a fixed bug (unreadable header buttons) kept being reported as still
+    broken. It must go through _versioned_static() like every other admin
+    asset, so a fix actually reaches people the moment it's deployed.
+    """
+
+    STYLE = 'css/admin-theme.css?v='
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.admin = User.objects.create_superuser('admin@example.com', 'pw')
+
+    def test_stylesheet_is_loaded_with_a_cache_busting_version(self):
+        self.assertContains(self.client.get(reverse('admin:login')), self.STYLE)
+        self.client.force_login(self.admin)
+        self.assertContains(self.client.get(reverse('admin:index')), self.STYLE)
+
+    def test_stylesheet_url_changes_when_the_file_changes(self):
+        # otherwise a browser can keep running a cached, pre-fix copy — see class docstring
+        from caffeine_corner.settings import _versioned_static
+        url = _versioned_static('css/admin-theme.css')
+        with mock.patch.object(os.path, 'getmtime', return_value=111):
+            first = url(None)
+        with mock.patch.object(os.path, 'getmtime', return_value=222):
+            second = url(None)
+        self.assertTrue(first.endswith('css/admin-theme.css?v=111'), first)
+        self.assertTrue(second.endswith('css/admin-theme.css?v=222'), second)

@@ -5,6 +5,7 @@ from django.db import models
 from django.conf import settings
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.forms import ValidationError
+from django.utils import timezone
 
 # The shop's physical dine-in tables (not DB-backed — there are only 5,
 # fixed, matching the printed QR codes). Single source of truth for the QR
@@ -52,6 +53,14 @@ class Product(models.Model):
     sku = models.CharField(max_length=20, unique=True)
     barcode = models.CharField(max_length=150, db_index=True)
     image = models.ImageField(upload_to="product_images/", blank=True, max_length=255)
+    time_production = models.IntegerField(
+        default=0,
+        validators=[MinValueValidator(0)],
+        verbose_name="Preparation time (minutes)",
+        help_text="How long this item takes to make (pastries usually longer than drinks). "
+                   "Used to estimate ready/delivery time and how long a rider stays tied up on an order. "
+                   "Leave at 0 if unsure — a sensible minimum is still assumed.",
+    )
     sort_order = models.IntegerField(default=0, db_index=True)
     is_available = models.BooleanField(default=True, db_index=True)
     is_featured = models.BooleanField(default=False, db_index=True)
@@ -153,8 +162,11 @@ class TownZone(models.Model):
         return f"{self.name} (₱{self.delivery_fee})"
     
 class Order(models.Model):
+    # The stored code for a delivery order is still "regular" (the customer app and
+    # old rows use it); only the label staff read changed — the Orders list, the
+    # exports and the Sales Report all call it Delivery.
     ORDER_TYPE_CHOICES = [
-        ('regular', 'Regular'),
+        ('regular', 'Delivery'),
         ('dine_in', 'Dine-in'),
         ('pickup',  'Pick-up'),
     ]
@@ -221,6 +233,16 @@ class Order(models.Model):
     delivery_proof_photo = models.ImageField(upload_to='delivery_proofs/', null=True, blank=True)
     delivered_at          = models.DateTimeField(null=True, blank=True)
     rider_notes           = models.TextField(blank=True, default='')
+    # When assigned_rider last *changed* — set automatically (see save() below),
+    # never typed in. What online_shop/rider_availability.py's rolling-hour
+    # batching window measures from; not touched by any other edit to the order.
+    assigned_rider_at     = models.DateTimeField(null=True, blank=True, editable=False)
+    # Cash-on-delivery only: which of the rider's Remittance hand-ins this order's
+    # payment was folded into. Blank means the rider is still holding it — see
+    # online_shop/remittance.py, the only place this is ever set.
+    remittance = models.ForeignKey(
+        'Remittance', on_delete=models.SET_NULL, null=True, blank=True, related_name='orders',
+    )
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -233,6 +255,25 @@ class Order(models.Model):
         ordering = ('-created_at',)
         verbose_name = 'Order'
         verbose_name_plural = 'Orders'
+
+    @classmethod
+    def from_db(cls, db, field_names, values):
+        # Remembers the rider this row *had* when it was loaded, so save() below
+        # can tell "still the same rider" from "just changed to this rider" —
+        # updated_at (auto_now) can't do that, it bumps on every save regardless.
+        instance = super().from_db(db, field_names, values)
+        instance._loaded_assigned_rider_id = instance.assigned_rider_id
+        return instance
+
+    def save(self, *args, **kwargs):
+        # A brand-new row (never loaded via from_db) has no _loaded_assigned_rider_id
+        # at all — getattr's default (None) is correct there too: any rider on a
+        # new order is, by definition, a change from "no rider".
+        loaded = getattr(self, '_loaded_assigned_rider_id', None)
+        if self.assigned_rider_id and self.assigned_rider_id != loaded:
+            self.assigned_rider_at = timezone.now()
+        super().save(*args, **kwargs)
+        self._loaded_assigned_rider_id = self.assigned_rider_id
 
     def __str__(self):
         name = self.user.username if self.user else self.email
@@ -268,6 +309,37 @@ class OrderItem(models.Model):
     @property
     def subtotal(self):
         return self.price * self.quantity
+
+
+class Remittance(models.Model):
+    """
+    One cash hand-in: every Cash-on-Delivery order a rider had delivered and
+    collected payment for, but hadn't yet turned in, folded into one record
+    at the moment it's turned in. See online_shop/remittance.py — the only
+    place these are ever created; nothing here is meant to be typed by hand
+    (deliveries.py enforces the total matches what was actually outstanding).
+    """
+    rider       = models.ForeignKey(
+                      settings.AUTH_USER_MODEL, on_delete=models.PROTECT,
+                      related_name='remittances', limit_choices_to={'is_rider': True},
+                  )
+    amount      = models.DecimalField(max_digits=10, decimal_places=2)
+    remitted_at = models.DateTimeField(auto_now_add=True)
+    received_by = models.ForeignKey(
+                      settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+                      null=True, blank=True, related_name='remittances_received',
+                  )
+    notes       = models.TextField(blank=True, default='')
+
+    class Meta:
+        ordering = ('-remitted_at',)
+        verbose_name = 'Remittance'
+        verbose_name_plural = 'Remittances'
+
+    def __str__(self):
+        name = self.rider.get_full_name() or self.rider.email
+        return f'₱{self.amount} from {name} on {self.remitted_at:%b %d, %Y}'
+
 
 class CartItem(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)

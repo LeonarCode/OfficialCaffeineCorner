@@ -46,6 +46,8 @@
     }
     .badge-bulk { background: #fff6e0; color: #a06010; }
     .badge-regular { background: #eaf5ed; color: #2e7d4a; }
+    .badge-dine { background: #f3ebe2; color: #6f4e37; }
+    .badge-pickup { background: #e8f0fb; color: #2b5fa8; }
 
     /* Items */
     .items-header {
@@ -171,14 +173,23 @@
         <span>
           {% if order.order_type == 'bulk' %}
             <span class="badge badge-bulk">🍽️ Bulk/Catering</span>
+          {% elif order.order_type == 'dine_in' %}
+            <span class="badge badge-dine">🍽️ Dine-in</span>
+          {% elif order.order_type == 'pickup' %}
+            <span class="badge badge-pickup">🛍️ Pick-up</span>
           {% else %}
-            <span class="badge badge-regular">📦 Regular</span>
+            <span class="badge badge-regular">🚚 Delivery</span>
           {% endif %}
         </span>
       </div>
       {% if order.order_type == 'bulk' and order.event_date %}
       <div class="order-info">
         Event Date <span>{{ order.event_date|date:"M d, Y" }}</span>
+      </div>
+      {% endif %}
+      {% if order.order_type == 'dine_in' and order.table_number %}
+      <div class="order-info">
+        Table <span>{{ order.table_number }}</span>
       </div>
       {% endif %}
       {% if order.pax %}

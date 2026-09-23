@@ -3,7 +3,6 @@ Shared plumbing for the real-browser (Playwright) tests of the admin — the one
 that have to run the admin's JavaScript to mean anything:
 
     tests/test_online_shop/test_stale_csrf_browser.py   stale CSRF tokens after a re-login
-    tests/test_inventory/test_quick_adjust_browser.py   the Quick Adjust +/- widget
     tests/test_inventory/test_purchasing_browser.py     Purchase Orders and the item page
 
 Playwright is an optional dev dependency: without it (or without its Chromium

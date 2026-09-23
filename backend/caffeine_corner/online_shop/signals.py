@@ -1,7 +1,18 @@
 from django.db.models.signals import post_save, post_delete, pre_save
 from django.dispatch import receiver
+from inventory import units
 from .models import Order, OrderItem, Notification
 from .utils import log_activity
+
+
+def _usage_quantity(ingredient, count):
+    """
+    How much of `ingredient.inventory` to move for `count` units of the
+    product — the recipe's own quantity converted into the inventory item's
+    unit first (see inventory.units), since a recipe written in "ml" against
+    stock tracked in "L" is not the same number.
+    """
+    return units.convert(ingredient.quantity, ingredient.unit, ingredient.inventory.unit) * count
 
 
 @receiver(post_save, sender=Order)
@@ -90,7 +101,7 @@ def deduct_inventory_on_order(sender, instance, created, **kwargs):
 
     for ingredient in ingredients:
         inventory_item = ingredient.inventory
-        usage_quantity = ingredient.quantity * quantity_ordered
+        usage_quantity = _usage_quantity(ingredient, quantity_ordered)
 
         # I-record ang stock movement — StockMovement.save() mismo ang
         # nagde-deduct sa quantity_on_hand (huwag nang i-deduct dito ulit,
@@ -144,7 +155,7 @@ def restore_inventory_on_order_item_delete(sender, instance, **kwargs):
 
     for ingredient in ingredients:
         inventory_item = ingredient.inventory
-        restore_qty    = ingredient.quantity * quantity
+        restore_qty    = _usage_quantity(ingredient, quantity)
 
         # 'reversal' is stock-IN — StockMovement.save() alone applies the
         # restore, no manual pre-adjustment needed (see deduct_inventory_on_order).
@@ -200,7 +211,7 @@ def restore_inventory_on_cancel(sender, instance, created, **kwargs):
 
         for ingredient in ingredients:
             inventory_item = ingredient.inventory
-            restore_qty    = ingredient.quantity * quantity
+            restore_qty    = _usage_quantity(ingredient, quantity)
 
             # 'reversal' is stock-IN — StockMovement.save() alone applies the
             # restore, no manual pre-adjustment needed (see deduct_inventory_on_order).

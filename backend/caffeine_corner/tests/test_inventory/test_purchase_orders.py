@@ -8,11 +8,14 @@ records the stock movement, so the PO, the item's history and its stock level
 always agree.
 """
 import datetime
-import re
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.core import mail
+from django.db import connection
+from django.db.models.signals import post_save
+from django.test import Client, TestCase
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
 
@@ -109,6 +112,42 @@ class PurchasingRulesTests(TestCase):
         self.po.refresh_from_db()
         self.assertEqual(self.po.status, 'received')
 
+    def test_close_partial_is_what_actually_does_that_lowering(self):
+        line = self.po.items.get(inventory=self.beans)                  # 5 ordered
+        line.quantity_received = Decimal('3')
+        line.save()
+        purchasing.record_receipt(line, Decimal('3'), self.user)
+        purchasing.sync_status(self.po)                                  # -> 'partial' (milk: 0 of 2000 in)
+        purchasing.close_partial(self.po)
+        self.po.refresh_from_db()
+        self.assertEqual(self.po.status, 'received')
+        line.refresh_from_db()
+        self.assertEqual((line.quantity_ordered, line.quantity_received), (Decimal('3.00'), Decimal('3.00')))
+        self.assertEqual(stock(self.beans), Decimal('13.00'))            # only the 3 that were actually recorded — no new movement
+
+    def test_close_partial_does_not_bother_writing_a_line_that_is_already_fully_in(self):
+        beans_line = self.po.items.get(inventory=self.beans)
+        beans_line.quantity_received = Decimal('5')                      # already fully in — nothing to lower
+        beans_line.save()
+        milk_line = self.po.items.get(inventory=self.milk)
+        milk_line.quantity_received = Decimal('500')                     # short — this one needs the write
+        milk_line.save()
+        purchasing.sync_status(self.po)
+        with CaptureQueriesContext(connection) as queries:
+            purchasing.close_partial(self.po)
+        writes = [q['sql'] for q in queries if q['sql'].startswith('UPDATE') and 'purchaseorderitem' in q['sql']]
+        self.assertEqual(len(writes), 1, writes)                         # milk only, not beans too
+        beans_line.refresh_from_db(), milk_line.refresh_from_db()
+        self.assertEqual((beans_line.quantity_ordered, beans_line.quantity_received), (Decimal('5.00'), Decimal('5.00')))
+        self.assertEqual((milk_line.quantity_ordered, milk_line.quantity_received), (Decimal('500.00'), Decimal('500.00')))
+
+    def test_close_partial_refuses_unless_the_order_is_actually_partial(self):
+        with self.assertRaises(purchasing.PurchaseOrderError):
+            purchasing.close_partial(self.po)                            # still 'sent' — nothing has arrived yet
+        purchasing.receive_remaining(self.po, self.user)                 # now 'received'
+        with self.assertRaises(purchasing.PurchaseOrderError):
+            purchasing.close_partial(self.po)
+
     # ── old data ──
     def test_an_order_marked_received_with_nothing_in_can_still_be_fixed(self):
         # how PO-2026-0001 looked: status "received", every line still at 0 received
@@ -144,28 +183,88 @@ class PurchasingRulesTests(TestCase):
 
 
 class PurchaseOrderNumberingTests(TestCase):
+    """
+    PurchaseOrder.save() is what actually assigns the number (a blank reference,
+    on any save) — these don't go through the admin, on purpose, to pin down that
+    it's the model doing this, not something the admin adds on top.
+    """
     def setUp(self):
         self.supplier = make_supplier()
         self.item = make_item(supplier=self.supplier)
-        self.today = datetime.date(2026, 9, 20)
 
-    def po(self, reference):
-        return make_po(self.supplier, [(self.item, 1)], reference=reference)
+    def test_reference_for_is_the_ids_own_number(self):
+        po = make_po(self.supplier, [(self.item, 1)])
+        self.assertEqual(purchasing.reference_for(po), f'PO-{po.pk:06d}')
 
-    def test_first_of_the_month(self):
-        self.assertEqual(purchasing.next_reference(self.today), 'PO-202609-0001')
+    def test_a_new_blank_order_is_numbered_from_its_own_id_in_one_save_call(self):
+        po = PurchaseOrder.objects.create(supplier=self.supplier, status='draft')     # blank — nothing typed
+        self.assertEqual(po.reference, f'PO-{po.pk:06d}')
+        self.assertEqual(PurchaseOrder.objects.get(pk=po.pk).reference, po.reference)  # really persisted, not just in memory
 
-    def test_continues_from_the_highest_number_not_from_a_count(self):
-        # counting rows gave 2 here — colliding with -0002 — the moment anything had been deleted or typed by hand
-        self.po('PO-202609-0001')
-        self.po('PO-202609-0004')
-        self.assertEqual(purchasing.next_reference(self.today), 'PO-202609-0005')
+    def test_a_hand_typed_reference_is_kept_exactly(self):
+        po = PurchaseOrder.objects.create(supplier=self.supplier, status='draft', reference='KENT-INV-77')
+        self.assertEqual(po.reference, 'KENT-INV-77')
 
-    def test_other_months_and_free_text_references_do_not_count(self):
-        self.po('PO-202608-0099')
-        self.po('PO-2026-0001')
-        self.po('Kent delivery Sept')
-        self.assertEqual(purchasing.next_reference(self.today), 'PO-202609-0001')
+    def test_saving_an_already_numbered_order_again_changes_nothing(self):
+        po = PurchaseOrder.objects.create(supplier=self.supplier, status='draft')
+        first = po.reference
+        po.save()
+        self.assertEqual(po.reference, first)
+
+    def test_blanking_an_existing_orders_reference_numbers_it_from_its_own_id_too(self):
+        po = PurchaseOrder.objects.create(supplier=self.supplier, status='draft', reference='TEMP-1')
+        po.reference = ''
+        po.save()
+        self.assertEqual(po.reference, f'PO-{po.pk:06d}')
+
+    def test_the_placeholder_never_reaches_the_saved_row(self):
+        # The two-save dance for a brand-new blank order goes through a placeholder
+        # to satisfy the required+unique column before the id exists — this pins
+        # down that nothing ever reads that placeholder back out.
+        po = PurchaseOrder.objects.create(supplier=self.supplier, status='draft')
+        self.assertFalse(po.reference.startswith(PurchaseOrder._PENDING_PREFIX))
+        self.assertFalse(PurchaseOrder.objects.filter(reference__startswith=PurchaseOrder._PENDING_PREFIX).exists())
+
+    def test_the_column_is_never_actually_left_blank_not_even_for_an_instant(self):
+        # required + unique: even a moment with two blank rows at once risks a
+        # collision (or, without the placeholder, a crash on a database that still
+        # has the column as NOT NULL — see PurchaseOrder.save()). Caught here by
+        # watching what the very first insert actually wrote, before the second
+        # save (which is what turns it into the real number) has even happened.
+        seen = []
+
+        def capture(sender, instance, created, **kwargs):
+            if created:
+                seen.append(instance.reference)
+
+        post_save.connect(capture, sender=PurchaseOrder)
+        try:
+            PurchaseOrder.objects.create(supplier=self.supplier, status='draft')
+        finally:
+            post_save.disconnect(capture, sender=PurchaseOrder)
+        self.assertEqual(len(seen), 1)
+        self.assertTrue(seen[0])                                            # never blank …
+        self.assertTrue(seen[0].startswith(PurchaseOrder._PENDING_PREFIX))  # … and not yet the real number either
+
+    def test_numbers_never_collide_and_gaps_or_deletions_change_nothing(self):
+        # Unlike a separately-counted scheme, there is nothing to "continue from": every
+        # number comes straight from its own row's id, so a deleted or hand-typed order
+        # in between can never cause a clash.
+        make_po(self.supplier, [(self.item, 1)], reference='PO-MINE-1')
+        deleted = PurchaseOrder.objects.create(supplier=self.supplier, status='cancelled')
+        deleted_id = deleted.pk
+        deleted.delete()
+        po = PurchaseOrder.objects.create(supplier=self.supplier, status='draft')
+        self.assertNotEqual(po.pk, deleted_id)                  # ids are never reused …
+        self.assertEqual(po.reference, f'PO-{po.pk:06d}')        # … so this can't collide with the deleted order's number
+        self.assertEqual(PurchaseOrder.objects.filter(reference__in=['PO-MINE-1', po.reference]).count(), 2)
+
+    def test_two_orders_created_back_to_back_get_different_numbers(self):
+        # Not a real concurrency test (SQLite/Postgres both serialize this single
+        # process's writes) — just confirms nothing is cached or reused between calls.
+        first = PurchaseOrder.objects.create(supplier=self.supplier, status='draft')
+        second = PurchaseOrder.objects.create(supplier=self.supplier, status='draft')
+        self.assertNotEqual(first.reference, second.reference)
 
 
 class ReorderReportTests(TestCase):
@@ -235,20 +334,32 @@ class PurchaseOrderAdminTests(TestCase):
         r = self.add_po([(self.beans, '5', '')])
         self.assertEqual(r.status_code, 302, getattr(r, 'context', None) and r.context['adminform'].form.errors)
         po = PurchaseOrder.objects.get()
-        self.assertRegex(po.reference, r'^PO-\d{6}-0001$')
+        self.assertEqual(po.reference, f'PO-{po.pk:06d}')
         self.assertEqual(po.created_by, self.admin)
         line = po.items.get()
         self.assertEqual((line.quantity_ordered, line.unit_cost, line.quantity_received), (Decimal('5.00'), Decimal('350.00'), 0))
 
-    def test_a_reference_typed_by_hand_is_kept(self):
-        self.add_po([(self.beans, '5', '350')], reference='KENT-INV-77')
-        self.assertEqual(PurchaseOrder.objects.get().reference, 'KENT-INV-77')
+    def test_the_add_form_has_no_reference_field_to_type_into(self):
+        # It can only ever be the order's own id — see PurchaseOrder.save() — so
+        # there is nothing to fill in and nothing to get wrong.
+        fields = self.client.get(self.add_url()).context['adminform'].form.fields
+        self.assertNotIn('reference', fields)
 
-    def test_a_typed_reference_must_still_be_unique(self):
-        make_po(self.supplier, [(self.beans, 1)], reference='DUP-1')
-        r = self.add_po([(self.beans, '5', '350')], reference='DUP-1')
-        self.assertEqual(r.status_code, 200)
-        self.assertEqual(PurchaseOrder.objects.count(), 1)
+    def test_posting_one_anyway_has_no_effect(self):
+        # Not a normal path (nothing in the UI offers it), but the form must not
+        # trust a 'reference' in the POST data just because someone sent one.
+        self.add_po([(self.beans, '5', '350')], reference='KENT-INV-77')
+        po = PurchaseOrder.objects.get()
+        self.assertEqual(po.reference, f'PO-{po.pk:06d}')
+
+    def test_the_reference_is_shown_read_only_and_cannot_be_changed_by_hand(self):
+        po = self.open_po('draft')
+        original = po.reference
+        form = self.client.get(self.change_url(po)).context['adminform'].form
+        self.assertNotIn('reference', form.fields)                 # readonly: not an editable field at all
+        self.change(po, reference='SOMETHING-ELSE')                # ignored — not a real field to post to
+        po.refresh_from_db()
+        self.assertEqual(po.reference, original)
 
     def test_a_new_order_can_only_be_draft_or_sent(self):
         form = self.client.get(self.add_url()).context['adminform'].form
@@ -320,13 +431,27 @@ class PurchaseOrderAdminTests(TestCase):
         self.change(po, **{'items-0-inventory': self.milk.pk})
         self.assertEqual(po.items.get().inventory, self.beans)
 
-    def test_lowering_the_order_to_what_arrived_completes_it_without_moving_stock_again(self):
+    def test_the_order_qty_and_cost_of_an_existing_line_cannot_be_changed_by_hand_either(self):
         po = self.open_po()
-        self.change(po, **{'items-0-quantity_received': '3'})
-        self.change(po, **{'items-0-quantity_ordered': '3'})
-        po.refresh_from_db()
-        self.assertEqual(po.status, 'received')
-        self.assertEqual(stock(self.beans), Decimal('13.00'))
+        self.change(po, **{'items-0-quantity_ordered': '999', 'items-0-unit_cost': '1'})
+        line = po.items.get()
+        self.assertEqual((line.quantity_ordered, line.unit_cost), (Decimal('5.00'), Decimal('350.00')))
+
+    def test_only_received_so_far_is_an_editable_field_on_an_existing_line(self):
+        po = self.open_po()
+        form = self.client.get(self.change_url(po)).context['inline_admin_formsets'][0].formset.forms[0]
+        for name in ('inventory', 'quantity_ordered', 'unit_cost'):
+            with self.subTest(field=name):
+                self.assertTrue(form.fields[name].disabled)
+        self.assertFalse(form.fields['quantity_received'].disabled)
+
+    def test_a_line_freshly_added_to_an_existing_order_is_still_fully_editable(self):
+        # the lock is per row (it already exists / it doesn't), not "any line on this order"
+        po = self.open_po()
+        form = self.client.get(self.change_url(po)).context['inline_admin_formsets'][0].formset.empty_form
+        for name in ('inventory', 'quantity_ordered', 'unit_cost'):
+            with self.subTest(field=name):
+                self.assertFalse(form.fields[name].disabled)
 
     def test_cancelling_after_receiving_some_is_refused(self):
         po = self.open_po()
@@ -401,14 +526,89 @@ class PurchaseOrderAdminTests(TestCase):
         self.assertEqual((clean.status, partly.status), ('cancelled', 'sent'))
         self.assertTrue(any('already received some stock' in m for m in self.messages(r)), self.messages(r))
 
-    def test_the_receive_button_on_the_order_page_receives_everything(self):
-        po = self.open_po()
+    def test_close_partial_from_the_list_only_applies_to_orders_actually_partial(self):
+        po = self.open_po('sent')
+        self.change(po, **{'items-0-quantity_received': '3'})            # -> 'partial'
+        untouched = self.open_po('sent')                                 # nothing received yet
+        r = self.run_action('close_partial_action', po, untouched)
+        po.refresh_from_db(), untouched.refresh_from_db()
+        self.assertEqual((po.status, po.items.get().quantity_ordered), ('received', Decimal('3.00')))
+        self.assertEqual(untouched.status, 'sent')                       # skipped, not forced closed
+        self.assertTrue(any('closed as fully received' in m for m in self.messages(r)), self.messages(r))
+        self.assertTrue(any('is not partially received' in m for m in self.messages(r)), self.messages(r))
+
+    def test_the_receive_button_asks_first_and_only_the_confirmed_post_changes_anything(self):
+        po = self.open_po('draft')
         url = reverse('admin:inventory_purchaseorder_receive_remaining_detail', args=[po.pk])
-        r = self.client.get(url, follow=True)
+
+        page = self.client.get(url)                                     # what a link click (or a link someone planted) does
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, 'Receive everything still outstanding?')
+        self.assertEqual(stock(self.beans), Decimal('10.00'))           # …is show the question, and nothing else
+        po.refresh_from_db()
+        self.assertEqual(po.status, 'draft')
+
+        r = self.client.post(url, {'_form_submitted': 'on'}, follow=True)   # what the dialog's button sends
         self.assertEqual(stock(self.beans), Decimal('15.00'))
         po.refresh_from_db()
         self.assertEqual(po.status, 'received')
         self.assertEqual(r.redirect_chain[-1][0], self.change_url(po))          # back to the order page
+
+    def test_the_dialog_posts_through_htmx_and_is_told_to_load_the_order_page(self):
+        po = self.open_po('draft')
+        url = reverse('admin:inventory_purchaseorder_receive_remaining_detail', args=[po.pk])
+        r = self.client.post(url, {'_form_submitted': 'on'}, HTTP_HX_REQUEST='true')
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r['HX-Redirect'], self.change_url(po))         # htmx follows this; a 302 would swap the whole page into the dialog
+
+    def test_the_close_partial_button_is_only_offered_once_something_has_arrived_but_not_everything(self):
+        po = self.open_po('sent')
+        request = self.client.get(reverse('admin:inventory_purchaseorder_changelist')).wsgi_request
+        model_admin = self.admin_for(PurchaseOrder)
+        self.assertEqual(model_admin.has_close_partial_permission(request, po.pk), False)
+        self.change(po, **{'items-0-quantity_received': '3'})
+        po.refresh_from_db()
+        self.assertEqual(model_admin.has_close_partial_permission(request, po.pk), True)
+        self.assertEqual(self.client.get(self.change_url(po)).content.count(b'Close as partially received'), 1)
+
+    def test_the_close_partial_button_asks_first_and_only_the_confirmed_post_changes_anything(self):
+        po = self.open_po('sent')
+        self.change(po, **{'items-0-quantity_received': '3'})            # -> 'partial'
+        url = reverse('admin:inventory_purchaseorder_close_partial_detail', args=[po.pk])
+
+        page = self.client.get(url)
+        self.assertEqual(page.status_code, 200)
+        self.assertContains(page, 'Close this order as partially received?')
+        po.refresh_from_db()
+        self.assertEqual((po.status, po.items.get().quantity_ordered), ('partial', Decimal('5.00')))   # not yet
+
+        r = self.client.post(url, {'_form_submitted': 'on'}, follow=True)
+        po.refresh_from_db()
+        self.assertEqual((po.status, po.items.get().quantity_ordered), ('received', Decimal('3.00')))
+        self.assertEqual(stock(self.beans), Decimal('13.00'))            # unchanged — nothing new was received
+        self.assertEqual(r.redirect_chain[-1][0], self.change_url(po))
+
+    def test_a_post_without_the_csrf_token_is_refused(self):
+        po = self.open_po('draft')
+        strict = Client(enforce_csrf_checks=True)
+        strict.force_login(self.admin)
+        for name in ('receive_remaining_detail', 'mark_sent_detail', 'email_supplier_detail'):
+            with self.subTest(action=name):
+                r = strict.post(reverse(f'admin:inventory_purchaseorder_{name}', args=[po.pk]), {'_form_submitted': 'on'})
+                self.assertEqual(r.status_code, 403)
+        self.assertEqual(stock(self.beans), Decimal('10.00'))
+        po.refresh_from_db()
+        self.assertEqual((po.status, po.emailed_at), ('draft', None))
+
+    def test_every_detail_button_only_shows_its_dialog_on_get(self):
+        po = self.open_po('draft')
+        for name, title in (('mark_sent_detail', 'Mark this order as sent?'), ('email_supplier_detail', 'Email this order to the supplier?')):
+            with self.subTest(action=name):
+                page = self.client.get(reverse(f'admin:inventory_purchaseorder_{name}', args=[po.pk]))
+                self.assertContains(page, title)
+        po.refresh_from_db()
+        self.assertEqual((po.status, po.emailed_at), ('draft', None))
+        self.assertEqual(len(mail.outbox), 0)
 
     def test_buttons_show_only_when_they_make_sense(self):
         model_admin = self.admin_for(PurchaseOrder)
@@ -492,12 +692,12 @@ class AutoGeneratePurchaseOrdersTests(TestCase):
         self.assertEqual(sorted(draft.items.values_list('inventory__name', flat=True)), ['Butter', 'Sugar'])
         self.assertTrue(any('added to draft PO-MINE-1' in m for m in messages), messages)
 
-    def test_numbering_survives_gaps_and_hand_typed_numbers(self):
-        month = timezone.localdate().strftime('%Y%m')
-        make_po(self.kent, [(self.sugar, 1)], reference=f'PO-{month}-0007', status='received')     # (done, so sugar is re-orderable)
+    def test_numbering_is_the_new_orders_own_id_whatever_else_exists(self):
+        make_po(self.kent, [(self.sugar, 1)], reference='PO-MINE-7', status='received')     # (done, so sugar is re-orderable)
         PurchaseOrder.objects.all().update(status='cancelled')
         self.generate()
-        self.assertTrue(PurchaseOrder.objects.filter(reference=f'PO-{month}-0008').exists())
+        po = PurchaseOrder.objects.get(status='draft')
+        self.assertEqual(po.reference, f'PO-{po.pk:06d}')
 
     def test_nothing_to_order(self):
         Inventory.objects.update(quantity_on_hand=Decimal('99999'))

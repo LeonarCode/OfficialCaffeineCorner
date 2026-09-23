@@ -68,6 +68,23 @@ const RiderDashboard = () => {
         )}
       </div>
 
+      {/* Cash to remit — only shown once there's actually something to bring back;
+          staff are the ones who record it as turned in (Users & Access, in the
+          admin), so this is read-only here. */}
+      {stats && stats.to_remit_count > 0 && (
+        <div className='px-4 pt-4'>
+          <div className='bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-center justify-between'>
+            <div>
+              <p className='text-amber-900 font-semibold text-sm'>💵 Cash to remit</p>
+              <p className='text-amber-700 text-xs mt-0.5'>
+                {stats.to_remit_count} delivered order{stats.to_remit_count !== 1 ? 's' : ''} — bring this to the shop
+              </p>
+            </div>
+            <p className='text-amber-900 font-bold text-lg'>₱{parseFloat(stats.to_remit).toFixed(2)}</p>
+          </div>
+        </div>
+      )}
+
       {/* Orders List */}
       <div className='px-4 pt-4'>
         <p className='text-[#2C1503] font-semibold text-sm mb-3'>My Deliveries ({orders.length})</p>

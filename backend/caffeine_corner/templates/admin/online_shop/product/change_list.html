@@ -28,12 +28,28 @@
     <div class="flex flex-col gap-1 p-3 grow">
       <p class="font-semibold text-sm text-font-important-light dark:text-font-important-dark truncate">{{ product.name }}</p>
       <p class="text-xs text-font-subtle-light dark:text-font-subtle-dark">{{ product.category }}</p>
+      {% if product.rating_count %}
+        <p class="flex items-center gap-1 text-xs m-0" title="{{ product.rating_count }} rating{{ product.rating_count|pluralize }}">
+          <span class="an-stars an-stars--sm">★</span>
+          <span class="font-semibold {% if product.avg_rating >= 4 %}an-rate--good{% elif product.avg_rating >= 3 %}an-rate--mid{% else %}an-rate--low{% endif %}">{{ product.avg_rating|floatformat:1 }}</span>
+          <span class="text-font-subtle-light dark:text-font-subtle-dark">({{ product.rating_count }})</span>
+        </p>
+      {% else %}
+        <p class="text-xs m-0 text-font-subtle-light dark:text-font-subtle-dark">{% trans "No ratings yet" %}</p>
+      {% endif %}
 
       <div class="mt-auto pt-2 flex items-center justify-between">
         <span class="font-bold text-sm text-primary-700 dark:text-primary-400">₱{{ product.price }}</span>
-        {% if product.is_seasonal %}
-          <span class="material-symbols-outlined text-sm text-orange-600 dark:text-orange-400" title="{% trans 'Seasonal' %}">eco</span>
-        {% endif %}
+        <span class="flex items-center gap-1">
+          {% if product.time_production %}
+            <span class="flex items-center gap-0.5 text-xs text-font-subtle-light dark:text-font-subtle-dark" title="{% trans 'Preparation time' %}">
+              <span class="material-symbols-outlined text-sm">schedule</span>{{ product.time_production }}m
+            </span>
+          {% endif %}
+          {% if product.is_seasonal %}
+            <span class="material-symbols-outlined text-sm text-orange-600 dark:text-orange-400" title="{% trans 'Seasonal' %}">eco</span>
+          {% endif %}
+        </span>
       </div>
     </div>
   </a>

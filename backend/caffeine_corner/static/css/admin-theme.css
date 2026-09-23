@@ -74,3 +74,23 @@
 .cc-header *:not(.absolute):not(.absolute *):not([x-data*="showActions"]):not([x-data*="showActions"] *) {
   color: var(--color-primary-50) !important;
 }
+/* The `:not([x-data*="showActions"] *)` above stops the rule from being
+   applied *inside* that dropdown — but `color` inherits, and the dropdown's
+   own wrapper sits right next to text the rule above legitimately does
+   color, so the near-white kept flowing in anyway ("History" — Unfold's
+   own, unreadable on the dropdown's own white background).
+   Every *button* in that dropdown (as opposed to plain links like the
+   account menu) is one of PurchaseOrderAdmin's detail actions, all of which
+   are PRIMARY-variant (solid background, white text — Unfold's own
+   `.text-white`/`.bg-primary-600`) — except "History", which isn't ours to
+   give a variant to. So it gets the same look here in CSS instead: brown,
+   like the others, but the lighter shade they already use, not the
+   header's own (near-black) brown — next to it, that would have been just
+   as unreadable as white-on-white was. */
+.cc-header [x-data*="showActions"] li:not(.text-white) {
+  background-color: var(--color-primary-600) !important;
+  border-color: var(--color-primary-700) !important;
+}
+.cc-header [x-data*="showActions"] li:not(.text-white) * {
+  color: #fff !important;
+}

@@ -1,13 +1,39 @@
 {% load i18n %}
-<div class="flex flex-wrap gap-2 mb-4">
-  <a href="/admin/export-orders/?format=excel"
-     class="font-medium inline-flex items-center gap-1 relative rounded-default justify-center whitespace-nowrap cursor-pointer px-3 py-1.5 text-sm border border-base-200 bg-primary-600 border-transparent text-white hover:bg-primary-600/80">
-    <span class="material-symbols-outlined text-sm -ml-0.5">download</span>
-    {% trans "Export Excel" %}
-  </a>
-  <a href="/admin/export-orders/?format=csv"
-     class="font-medium inline-flex items-center gap-1 relative rounded-default justify-center whitespace-nowrap cursor-pointer px-3 py-1.5 text-sm border border-base-200 bg-white shadow-xs text-important dark:border-base-700 dark:bg-transparent hover:bg-base-100/80 dark:hover:bg-base-800/80">
-    <span class="material-symbols-outlined text-sm -ml-0.5">description</span>
-    {% trans "Export CSV" %}
-  </a>
+{% comment %}
+  Above the Orders list (OrderAdmin.list_before_template): the Dine-in / Pick-up /
+  Delivery tabs, and the export buttons.
+
+  `order_tabs` and `export_group` come from OrderAdmin._group_tabs(): each tab is a
+  plain link to the same list with ?order_type=… (so it keeps the search and the
+  other filters), with how many orders are in that group and how many are still
+  pending. Exporting from a tab exports that group. Styles: static/css/admin-analytics.css.
+{% endcomment %}
+<div class="an-toolbar" id="orderGroups">
+  {% if order_tabs %}
+  <nav class="an-tabs" aria-label="{% trans 'Order type' %}">
+    {% for tab in order_tabs %}
+    <a class="an-tab{% if tab.active %} is-active{% endif %}" href="{{ tab.url }}" data-group="{{ tab.key }}"
+       {% if tab.active %}aria-current="page"{% endif %}
+       title="{{ tab.label }}: {{ tab.count }} order{{ tab.count|pluralize }}{% if tab.pending %}, {{ tab.pending }} pending{% endif %}">
+      <span class="material-symbols-outlined" aria-hidden="true">{{ tab.icon }}</span>
+      <span>{{ tab.label }}</span>
+      <span class="an-tab-count">{{ tab.count }}</span>
+      {% if tab.pending %}<span class="an-tab-pending">{{ tab.pending }} pending</span>{% endif %}
+    </a>
+    {% endfor %}
+  </nav>
+  {% endif %}
+
+  <div class="an-actions">
+    <a href="{% url 'export-orders' %}?format=excel{% if export_group %}&amp;order_type={{ export_group }}{% endif %}"
+       class="font-medium inline-flex items-center gap-1 relative rounded-default justify-center whitespace-nowrap cursor-pointer px-3 py-1.5 text-sm border border-base-200 bg-primary-600 border-transparent text-white hover:bg-primary-600/80">
+      <span class="material-symbols-outlined text-sm -ml-0.5">download</span>
+      {% trans "Export Excel" %}{% if export_group_label %} · {{ export_group_label }}{% endif %}
+    </a>
+    <a href="{% url 'export-orders' %}?format=csv{% if export_group %}&amp;order_type={{ export_group }}{% endif %}"
+       class="font-medium inline-flex items-center gap-1 relative rounded-default justify-center whitespace-nowrap cursor-pointer px-3 py-1.5 text-sm border border-base-200 bg-white shadow-xs text-important dark:border-base-700 dark:bg-transparent hover:bg-base-100/80 dark:hover:bg-base-800/80">
+      <span class="material-symbols-outlined text-sm -ml-0.5">description</span>
+      {% trans "Export CSV" %}{% if export_group_label %} · {{ export_group_label }}{% endif %}
+    </a>
+  </div>
 </div>

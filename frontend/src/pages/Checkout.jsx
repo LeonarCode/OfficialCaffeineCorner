@@ -135,6 +135,9 @@ const Checkout = () => {
     }
     if (needsDelivery && !form.address) e.address = 'Delivery address is required'
     if (needsDelivery && !selectedZone) e.zone = 'Please select your delivery zone'
+    else if (needsDelivery && selectedZone && selectedZone.has_available_rider === false) {
+      e.zone = 'No riders are available for this zone right now. Please try again later.'
+    }
     if (needsDelivery && !deliveryCoords) e.location = 'Please pin your delivery location on the map'
 
     setErrors(e)
@@ -193,7 +196,7 @@ const Checkout = () => {
   }
 
   const isFormValid = form.email && form.phone && validatePhone(form.phone) &&
-    (!needsDelivery || (form.address && selectedZone && deliveryCoords))
+    (!needsDelivery || (form.address && selectedZone && selectedZone.has_available_rider !== false && deliveryCoords))
 
   return (
     <div className='flex flex-col min-h-screen bg-[#FAF6F0]'>
@@ -457,32 +460,40 @@ const Checkout = () => {
                       </p>
                     ) : (
                       <div className='flex flex-col gap-2'>
-                        {zones.map(zone => (
-                          <label
-                            key={zone.id}
-                            className={`flex items-center justify-between border rounded-xl px-4 py-3 cursor-pointer transition
-                              ${selectedZone?.id === zone.id ? 'border-[#C4A882] bg-[#FAF6F0]' : 'border-gray-200 hover:border-gray-300'}`}
-                          >
-                            <div className='flex items-center gap-3'>
-                              <input
-                                type='radio'
-                                name='zone'
-                                checked={selectedZone?.id === zone.id}
-                                onChange={() => { setSelectedZone(zone); setErrors(p => ({ ...p, zone: '' })) }}
-                                className='accent-[#3D1F00]'
-                              />
-                              <div>
-                                <p className='text-[#2C1503] text-sm font-semibold'>{zone.name}</p>
-                                {zone.estimated_time && (
-                                  <p className='text-xs text-gray-400'>⏱ {zone.estimated_time}</p>
-                                )}
+                        {zones.map(zone => {
+                          const unavailable = zone.has_available_rider === false
+                          return (
+                            <label
+                              key={zone.id}
+                              className={`flex items-center justify-between border rounded-xl px-4 py-3 transition
+                                ${unavailable ? 'border-gray-100 bg-gray-50 opacity-60 cursor-not-allowed'
+                                  : selectedZone?.id === zone.id ? 'border-[#C4A882] bg-[#FAF6F0] cursor-pointer'
+                                  : 'border-gray-200 hover:border-gray-300 cursor-pointer'}`}
+                            >
+                              <div className='flex items-center gap-3'>
+                                <input
+                                  type='radio'
+                                  name='zone'
+                                  checked={selectedZone?.id === zone.id}
+                                  disabled={unavailable}
+                                  onChange={() => { setSelectedZone(zone); setErrors(p => ({ ...p, zone: '' })) }}
+                                  className='accent-[#3D1F00]'
+                                />
+                                <div>
+                                  <p className='text-[#2C1503] text-sm font-semibold'>{zone.name}</p>
+                                  {unavailable ? (
+                                    <p className='text-xs text-red-400 font-semibold'>No riders available right now</p>
+                                  ) : zone.estimated_time && (
+                                    <p className='text-xs text-gray-400'>⏱ {zone.estimated_time}</p>
+                                  )}
+                                </div>
                               </div>
-                            </div>
-                            <p className='text-[#6f4e37] text-sm font-bold shrink-0'>
-                              {parseFloat(zone.delivery_fee) === 0 ? 'Free' : `₱${parseFloat(zone.delivery_fee).toFixed(2)}`}
-                            </p>
-                          </label>
-                        ))}
+                              <p className='text-[#6f4e37] text-sm font-bold shrink-0'>
+                                {parseFloat(zone.delivery_fee) === 0 ? 'Free' : `₱${parseFloat(zone.delivery_fee).toFixed(2)}`}
+                              </p>
+                            </label>
+                          )
+                        })}
                       </div>
                     )}
                     {errors.zone && <p className='text-red-400 text-xs mt-1'>{errors.zone}</p>}

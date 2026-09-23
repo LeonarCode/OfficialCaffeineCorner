@@ -1,7 +1,7 @@
 """
-Rules for stock movements that staff enter by hand — shared by the item page,
-the Stock Movements form and the Quick Adjust widget, so the three can never
-drift apart on what is allowed.
+Rules for stock movements that staff enter by hand — shared by the item page
+and the Stock Movements form, so the two can never drift apart on what is
+allowed.
 
 (Movements written by the order system — usage / reversal — don't go through
 here: an order can't be refused because the shelf count is off, so the model

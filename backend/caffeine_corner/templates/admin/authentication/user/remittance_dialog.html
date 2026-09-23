@@ -1,0 +1,23 @@
+{% comment %}
+  Shown inside the "Record this remittance?" confirmation
+  (authentication.admin.RemittanceDialog): the amount and which orders it
+  covers, so staff see the total before it becomes a record.
+{% endcomment %}
+<div class="text-sm flex flex-col gap-3 mt-4">
+  {% if not rider %}
+    <p class="m-0">This rider could not be found.</p>
+  {% elif not orders %}
+    <p class="m-0 font-medium text-orange-700 dark:text-orange-400">
+      {{ rider }} has nothing outstanding right now — this may already be recorded.
+    </p>
+  {% else %}
+    <div class="rounded-default border border-base-200 dark:border-base-700 p-3 flex flex-col gap-1">
+      <p class="m-0"><span class="text-font-subtle-light dark:text-font-subtle-dark">Rider:</span> <strong>{{ rider }}</strong></p>
+      <p class="m-0"><span class="text-font-subtle-light dark:text-font-subtle-dark">Amount:</span> <strong>{{ total }}</strong></p>
+      <p class="m-0"><span class="text-font-subtle-light dark:text-font-subtle-dark">Orders:</span> {{ orders|join:", " }}</p>
+    </div>
+    <p class="m-0 text-font-subtle-light dark:text-font-subtle-dark">
+      Once recorded, these orders are marked as remitted and won’t show up as outstanding again.
+    </p>
+  {% endif %}
+</div>

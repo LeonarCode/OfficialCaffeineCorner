@@ -1,0 +1,27 @@
+{% comment %}
+  Shown inside the "Email this order to the supplier?" confirmation
+  (inventory.admin.EmailSupplierDialog): who it goes to and what it is about,
+  so the staff member sees the address before anything is sent.
+{% endcomment %}
+<div class="text-sm flex flex-col gap-3 mt-4" id="emailDialog">
+  {% if not supplier %}
+    <p class="m-0">This order could not be found.</p>
+  {% elif not address %}
+    <p class="m-0 font-medium text-red-700 dark:text-red-400">
+      {{ supplier }} has no email address on file.
+      <a class="underline" href="{{ supplier_url }}">Add one on the supplier’s page</a>, then try again.
+    </p>
+  {% else %}
+    <div class="rounded-default border border-base-200 dark:border-base-700 p-3 flex flex-col gap-1">
+      <p class="m-0"><span class="text-font-subtle-light dark:text-font-subtle-dark">To:</span> <strong>{{ supplier }}</strong> &lt;{{ address }}&gt;</p>
+      <p class="m-0"><span class="text-font-subtle-light dark:text-font-subtle-dark">Order:</span> {{ reference }} · {{ line_count }} item{{ line_count|pluralize }} · {{ total }}</p>
+      {% if expected %}<p class="m-0"><span class="text-font-subtle-light dark:text-font-subtle-dark">Expected delivery:</span> {{ expected }}</p>{% endif %}
+    </div>
+    {% if emailed %}
+      <p class="m-0 text-orange-700 dark:text-orange-400">Already emailed on {{ emailed }} — this sends an updated copy.</p>
+    {% endif %}
+    {% if will_be_marked_sent %}
+      <p class="m-0 text-font-subtle-light dark:text-font-subtle-dark">Once it’s sent, the order is marked as <strong>sent</strong>.</p>
+    {% endif %}
+  {% endif %}
+</div>

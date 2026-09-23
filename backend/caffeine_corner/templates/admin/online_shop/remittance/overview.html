@@ -1,0 +1,29 @@
+{% comment %}
+  Above the Remittance list (RemittanceAdmin.changelist_view): who is
+  currently holding cash, since "Record remittance" itself is a button on
+  each rider's own page, not here — this is the map to that button.
+{% endcomment %}
+{% load i18n %}
+{% if riders_outstanding %}
+<div class="bg-orange-100 dark:bg-orange-500/20 rounded-default p-4 mb-5 flex flex-col gap-3">
+  <p class="text-orange-700 dark:text-orange-400 font-semibold text-sm m-0">
+    {% blocktrans count counter=riders_outstanding|length %}{{ counter }} rider is currently holding cash — open one to record it{% plural %}{{ counter }} riders are currently holding cash — open one to record it{% endblocktrans %}
+  </p>
+  <div class="flex flex-col gap-1.5">
+    {% for rider, total, count in riders_outstanding %}
+    <a href="{% url 'admin:authentication_user_change' rider.pk %}"
+       class="flex items-center justify-between text-sm bg-white dark:bg-base-900 rounded-default px-3 py-2 border border-transparent hover:border-orange-300 dark:hover:border-orange-800 transition-colors">
+      <span class="text-font-important-light dark:text-font-important-dark font-medium">{{ rider.get_full_name|default:rider.email }}</span>
+      <span class="font-semibold text-orange-700 dark:text-orange-400 whitespace-nowrap">
+        ₱{{ total|floatformat:2 }} · {{ count }} order{{ count|pluralize }}
+      </span>
+    </a>
+    {% endfor %}
+  </div>
+</div>
+{% else %}
+<div class="bg-green-100 dark:bg-green-500/20 rounded-default px-4 py-3 mb-5 flex items-center gap-3">
+  <span class="material-symbols-outlined text-green-700 dark:text-green-400 text-lg">check_circle</span>
+  <p class="text-green-700 dark:text-green-400 text-xs font-medium m-0">No rider is currently holding any unremitted cash.</p>
+</div>
+{% endif %}
